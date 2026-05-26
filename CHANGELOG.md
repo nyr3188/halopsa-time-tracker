@@ -5,6 +5,20 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.9.3 — Scrollable Settings modal
+
+### Fixed
+- **Settings modal no longer overflows the window.** With the Connection,
+  Startup, Idle, Nudge, Quick-log durations, Global hotkeys, and About
+  sections all stacked in one card, the modal had grown taller than a
+  typical app window — Save / Cancel could end up below the screen with
+  no way to reach them. The card now has a `calc(100vh - 40px)`
+  max-height and the middle fieldsets sit in an internally-scrolling
+  region, so the heading and Save / Cancel buttons stay pinned while
+  the form scrolls behind them.
+
+---
+
 ## 0.9.2 — Fix broken startup after 0.9.0/0.9.1 update
 
 ### Fixed

@@ -425,7 +425,24 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 
 /* ---- Preferences ---- */
 
-.prefs-card { max-width: 560px; }
+.prefs-card {
+  max-width: 560px;
+  /* Cap height so the Settings modal never grows past the window. The
+     middle .prefs-scroll region absorbs the overflow; header + Save/Cancel
+     stay pinned. 40px accounts for the .modal's 20px padding top+bottom. */
+  max-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+}
+.prefs-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* Pull the scrollbar out from under the card's right padding so it
+     doesn't crowd the form controls. */
+  margin-right: -8px;
+  padding-right: 8px;
+}
 .prefs-group {
   border: 1px solid var(--border); border-radius: 10px;
   padding: 14px 16px 16px 16px; margin-top: 14px;
