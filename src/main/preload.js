@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('api', {
   pushAllUnsynced:  ()             => invoke('sessions:pushAll'),
   quickLog:         (payload)      => invoke('sessions:quickLog', payload),
   dailyTotals:      (payload)      => invoke('sessions:dailyTotals', payload),
+  weeklyTotals:     (payload)      => invoke('sessions:weeklyTotals', payload),
+  hoursByClient:    (payload)      => invoke('sessions:hoursByClient', payload),
 
   // preferences
   getPrefs:         ()             => invoke('prefs:get'),
@@ -43,6 +45,13 @@ contextBridge.exposeInMainWorld('api', {
   getNudgeContext:  ()             => invoke('nudge:context'),
   snoozeNudge:      (value)        => invoke('nudge:snooze', value),
   nudgeStarted:     ()             => invoke('nudge:started'),
+
+  // about / updates
+  getAppInfo:       ()             => invoke('app:info'),
+  checkForUpdates:  ()             => invoke('app:checkForUpdates'),
+  openReleaseNotes: ()             => invoke('app:openReleaseNotes'),
+  openLogFolder:    ()             => invoke('app:openLogFolder'),
+  openBackupFolder: ()             => invoke('app:openBackupFolder'),
 
   // events from main
   onIdleAutoPaused: (handler) => {
@@ -74,5 +83,10 @@ contextBridge.exposeInMainWorld('api', {
     const listener = () => handler();
     ipcRenderer.on('tray:open-settings', listener);
     return () => ipcRenderer.removeListener('tray:open-settings', listener);
+  },
+  onUpdateStatus: (handler) => {
+    const listener = (_evt, payload) => handler(payload);
+    ipcRenderer.on('update:status', listener);
+    return () => ipcRenderer.removeListener('update:status', listener);
   },
 });

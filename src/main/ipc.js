@@ -1,8 +1,12 @@
 'use strict';
 
-const { ipcMain, app, BrowserWindow } = require('electron');
+const path = require('path');
+const { ipcMain, app, BrowserWindow, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const { HaloClient } = require('./halo-client');
 const { MockHaloClient, MOCK_AGENT_ID } = require('./mock-halo-client');
+
+const RELEASES_URL = 'https://github.com/nyr3188/halopsa-time-tracker/releases';
 
 let _db = null;
 let _creds = null;
@@ -10,12 +14,20 @@ let _client = null;
 let _nudge = null;
 let _statusesCache = null;
 let _onSessionChanged = null;
+let _onPrefsChanged = null;
 
 // Sessions currently mid-push to Halo. Guards against the user clicking
 // "Push" twice (or Push + Push-all) and creating duplicate actions in Halo.
 const _pushingIds = new Set();
 
 // ---- preferences ----
+
+const DEFAULT_HOTKEYS = Object.freeze({
+  showApp:    'Control+Alt+T',
+  quickLog1:  'Control+Alt+1',
+  quickLog2:  'Control+Alt+2',
+  quickLog3:  'Control+Alt+3',
+});
 
 const PREFS_DEFAULTS = Object.freeze({
   idleAutoPauseEnabled: true,
@@ -26,17 +38,65 @@ const PREFS_DEFAULTS = Object.freeze({
   workHoursEnd: '17:00',
   // Comma-separated weekday numbers: 0=Sun, 1=Mon, ... 6=Sat. Default Mon–Fri.
   workDays: '1,2,3,4,5',
+  // Three quick-log durations, in minutes. The renderer renders one button
+  // per entry; the main process registers one global hotkey per entry.
+  quickLogMinutes: [5, 10, 15],
+  // Accelerator strings (Electron format). Blank = unregistered.
+  hotkeys: { ...DEFAULT_HOTKEYS },
 });
 
 function readPrefs() {
   const raw = _db.getSetting('prefs');
-  if (!raw) return { ...PREFS_DEFAULTS };
+  if (!raw) return clonePrefs(PREFS_DEFAULTS);
   try {
     const parsed = JSON.parse(raw);
-    return { ...PREFS_DEFAULTS, ...parsed };
+    const merged = { ...PREFS_DEFAULTS, ...parsed };
+    // Nested objects/arrays need their own merge so older configs that
+    // pre-date a new field still pick up its default.
+    merged.hotkeys = { ...DEFAULT_HOTKEYS, ...(parsed.hotkeys || {}) };
+    merged.quickLogMinutes = sanitizeQuickLogMinutes(
+      parsed.quickLogMinutes || PREFS_DEFAULTS.quickLogMinutes
+    );
+    return merged;
   } catch (_) {
-    return { ...PREFS_DEFAULTS };
+    return clonePrefs(PREFS_DEFAULTS);
   }
+}
+
+function clonePrefs(src) {
+  return {
+    ...src,
+    hotkeys: { ...src.hotkeys },
+    quickLogMinutes: [...src.quickLogMinutes],
+  };
+}
+
+// Three positive integers between 1 and 480 minutes. Anything else falls
+// back to the corresponding default — keeps a malformed save from breaking
+// the quick-log bar.
+function sanitizeQuickLogMinutes(input) {
+  const defaults = PREFS_DEFAULTS.quickLogMinutes;
+  const arr = Array.isArray(input) ? input : [];
+  return [0, 1, 2].map(i => {
+    const n = Math.round(Number(arr[i]));
+    return Number.isFinite(n) && n >= 1 && n <= 480 ? n : defaults[i];
+  });
+}
+
+// Accelerator strings are validated structurally — must contain at least one
+// modifier (Ctrl/Alt/Shift/Meta/Cmd/Super) and exactly one non-modifier key.
+// Returns the trimmed string if valid, null otherwise.
+function sanitizeAccelerator(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split('+').map(s => s.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const mods = new Set(['Control', 'Ctrl', 'CommandOrControl', 'CmdOrCtrl', 'Alt', 'Option', 'AltGr', 'Shift', 'Super', 'Meta', 'Command', 'Cmd']);
+  const modifierCount = parts.filter(p => mods.has(p)).length;
+  const keyCount = parts.length - modifierCount;
+  if (modifierCount < 1 || keyCount !== 1) return null;
+  return parts.join('+');
 }
 
 function writePrefs(partial) {
@@ -46,7 +106,23 @@ function writePrefs(partial) {
   next.nudgeIntervalMinutes = clamp(Number(next.nudgeIntervalMinutes) || 30, 5, 240);
   next.idleAutoPauseEnabled = !!next.idleAutoPauseEnabled;
   next.nudgeEnabled = !!next.nudgeEnabled;
+  next.quickLogMinutes = sanitizeQuickLogMinutes(next.quickLogMinutes);
+  const incoming = (partial && partial.hotkeys) || {};
+  const merged = { ...DEFAULT_HOTKEYS, ...(next.hotkeys || {}) };
+  for (const key of Object.keys(DEFAULT_HOTKEYS)) {
+    if (incoming[key] !== undefined) {
+      // Empty string = explicitly disabled. Anything else must validate.
+      const raw = incoming[key];
+      if (raw === '' || raw === null) merged[key] = '';
+      else merged[key] = sanitizeAccelerator(raw) || merged[key];
+    }
+  }
+  next.hotkeys = merged;
   _db.setSetting('prefs', JSON.stringify(next));
+  // Let main re-register globalShortcuts with the new accelerators/durations.
+  if (typeof _onPrefsChanged === 'function') {
+    try { _onPrefsChanged(next); } catch (_) { /* ignore — save still succeeded */ }
+  }
   return next;
 }
 
@@ -102,11 +178,12 @@ function hoursBetween(startIso, endIso) {
   return Math.round((minutes / 60) * 10000) / 10000;
 }
 
-function registerIpc({ db, creds, nudge, onSessionChanged }) {
+function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged }) {
   _db = db;
   _creds = creds;
   _nudge = nudge || null;
   _onSessionChanged = typeof onSessionChanged === 'function' ? onSessionChanged : null;
+  _onPrefsChanged = typeof onPrefsChanged === 'function' ? onPrefsChanged : null;
 
   // ---- status / settings ----
 
@@ -393,6 +470,18 @@ function registerIpc({ db, creds, nudge, onSessionChanged }) {
     } catch (err) { return fail(err); }
   });
 
+  ipcMain.handle('sessions:weeklyTotals', async (_evt, payload) => {
+    try {
+      return ok(_db.weeklyTotals(payload || {}));
+    } catch (err) { return fail(err); }
+  });
+
+  ipcMain.handle('sessions:hoursByClient', async (_evt, payload) => {
+    try {
+      return ok(_db.hoursByClient(payload || {}));
+    } catch (err) { return fail(err); }
+  });
+
   // ---- preferences ----
 
   ipcMain.handle('prefs:get', async () => {
@@ -407,9 +496,18 @@ function registerIpc({ db, creds, nudge, onSessionChanged }) {
 
   // ---- launch at login (Windows / macOS) ----
 
+  // The args / path passed to getLoginItemSettings must match what was passed
+  // to setLoginItemSettings — otherwise Electron compares against an empty
+  // args array and won't recognise the registry entry we wrote (Windows),
+  // which makes openAtLogin read back as false even when the entry exists.
+  const AUTOLAUNCH_OPTIONS = {
+    path: process.execPath,
+    args: ['--hidden'],
+  };
+
   ipcMain.handle('autolaunch:get', async () => {
     try {
-      const settings = app.getLoginItemSettings();
+      const settings = app.getLoginItemSettings(AUTOLAUNCH_OPTIONS);
       return ok({ enabled: !!settings.openAtLogin });
     } catch (err) {
       return fail(err);
@@ -438,6 +536,60 @@ function registerIpc({ db, creds, nudge, onSessionChanged }) {
         _nudge.markActivity();
         _nudge.closePopup();
       }
+      return ok(true);
+    } catch (err) { return fail(err); }
+  });
+
+  // ---- about / updates ----
+
+  ipcMain.handle('app:info', async () => {
+    try {
+      return ok({
+        version: app.getVersion(),
+        isPackaged: app.isPackaged,
+        logPath: path.join(app.getPath('userData'), 'logs', 'main.log'),
+        backupDir: path.join(app.getPath('documents'), 'HaloPSA Time Tracker', 'backups'),
+        releasesUrl: RELEASES_URL,
+      });
+    } catch (err) { return fail(err); }
+  });
+
+  ipcMain.handle('app:checkForUpdates', async () => {
+    try {
+      if (!app.isPackaged) {
+        // electron-updater can't check in dev (no installer to compare
+        // against). Surface that clearly instead of failing silently.
+        return ok({ skipped: true, reason: 'Update checks only run in packaged builds.' });
+      }
+      const result = await autoUpdater.checkForUpdates();
+      return ok({
+        skipped: false,
+        currentVersion: app.getVersion(),
+        updateVersion: result?.updateInfo?.version || null,
+      });
+    } catch (err) { return fail(err); }
+  });
+
+  ipcMain.handle('app:openReleaseNotes', async () => {
+    try { await shell.openExternal(RELEASES_URL); return ok(true); }
+    catch (err) { return fail(err); }
+  });
+
+  ipcMain.handle('app:openLogFolder', async () => {
+    try {
+      const logDir = path.join(app.getPath('userData'), 'logs');
+      const result = await shell.openPath(logDir);
+      // openPath returns '' on success, an error string on failure.
+      if (result) throw new Error(result);
+      return ok(true);
+    } catch (err) { return fail(err); }
+  });
+
+  ipcMain.handle('app:openBackupFolder', async () => {
+    try {
+      const backupDir = path.join(app.getPath('documents'), 'HaloPSA Time Tracker', 'backups');
+      const result = await shell.openPath(backupDir);
+      if (result) throw new Error(result);
       return ok(true);
     } catch (err) { return fail(err); }
   });

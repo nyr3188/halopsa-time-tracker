@@ -91,6 +91,13 @@ Per-tab search filters by ID, summary, client, or status. Pressing **Enter** in 
 
 A 7-day strip under the sessions log shows hours and session counts per day, so you can spot gaps before you push.
 
+### Weekly summary
+
+A panel below Daily totals shows two views side-by-side:
+
+- **Hours by week** — Mon–Sun buckets for the last 8 weeks, keyed by the Monday of each week.
+- **Hours by client (30 days)** — completed sessions grouped by the ticket's client name, sorted by total hours. Quick-logs and sessions whose ticket is no longer in the cache fall under "(unassigned)".
+
 ## Preferences
 
 Open **Preferences** in the top bar to configure:
@@ -98,17 +105,19 @@ Open **Preferences** in the top bar to configure:
 - **Startup** — toggle "Start automatically when I log in to Windows". The app starts hidden in the tray.
 - **Idle auto-pause** — when your machine is idle past the configured threshold (or it sleeps / locks the screen / shuts down), the running session is stopped and back-dated to when idleness began. The toast tells you *why* it stopped.
 - **No-timer nudge** — a small popup appears during configured work hours when no timer is running. Configurable interval, work hours start/end, and weekdays. One-click "start tracking" path; snooze options included.
+- **Quick-log durations** — set how many minutes each quick-log button (and its hotkey) logs. Each entry must be 1–480 minutes. Changes apply immediately on save.
+- **Global hotkeys** — rebind any of the four global shortcuts (show app, three quick-logs). Click a slot, press the combo, save. Use **Clear** to disable a hotkey entirely.
 
 ## Global hotkeys
 
-These work from anywhere on your machine while the app is running:
+These work from anywhere on your machine while the app is running. The defaults are:
 
 - `Ctrl+Alt+T` — show the window and focus the picker's search box
-- `Ctrl+Alt+1` — quick-log 5 minutes (unassigned)
-- `Ctrl+Alt+2` — quick-log 10 minutes (unassigned)
-- `Ctrl+Alt+3` — quick-log 15 minutes (unassigned)
+- `Ctrl+Alt+1` — quick-log button 1 (default: 5 minutes, unassigned)
+- `Ctrl+Alt+2` — quick-log button 2 (default: 10 minutes, unassigned)
+- `Ctrl+Alt+3` — quick-log button 3 (default: 15 minutes, unassigned)
 
-A Windows toast confirms each quick-log. If another app already owns one of these combos, the hotkey is skipped silently — the rest of the app still works.
+All four are user-configurable in **Settings → Global hotkeys**. A Windows toast confirms each quick-log. If another app already owns one of these combos, the hotkey is skipped silently — the rest of the app still works. Rebind it to something else from the Settings panel.
 
 ## Tray behavior
 
@@ -124,6 +133,16 @@ Opening **Settings** while already connected shows your current connection detai
 ## Updates
 
 Installed builds check GitHub Releases for a newer version 10 seconds after launch and every 4 hours after that. When one is found it downloads in the background and Windows shows a notification; the new version installs automatically the next time you quit the app. No manual reinstall needed.
+
+You can also check on demand from **Settings → About**, which shows the running version, the latest update status, and buttons for **Check for updates**, **Release notes**, **Open log folder**, and **Open backup folder**.
+
+## Logs
+
+The app keeps a persistent log at `%APPDATA%/halopsa-time-tracker/logs/main.log` (rotates at 5 MB, keeps the previous file as `main.old.log`). It captures startup, auto-update events, idle-monitor transitions, and any uncaught errors. **Settings → About → Open log folder** opens it directly.
+
+## Database backups
+
+On every launch the app writes a clean snapshot of the SQLite database to `Documents/HaloPSA Time Tracker/backups/app-YYYY-MM-DD.db`. The snapshot is produced via SQLite's `VACUUM INTO`, which writes a single defragmented file with no WAL sidecars — safe to drop into a OneDrive- or Dropbox-synced Documents folder. The 14 most recent snapshots are kept; older ones are pruned automatically. The live DB itself stays in `%APPDATA%/halopsa-time-tracker/` (sync of the live `*.db-wal` files is what corrupts SQLite, so we deliberately do not move it).
 
 ## Where things live
 

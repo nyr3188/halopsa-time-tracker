@@ -227,6 +227,51 @@ function markSessionSynced({ id, actionId }) {
   return getSession(id);
 }
 
+// ----- backups -----
+
+/**
+ * Write a clean snapshot of the DB to `targetDir/app-YYYY-MM-DD.db`, then
+ * prune to the most recent `keep` files. `VACUUM INTO` produces a single,
+ * defragmented file with no WAL sidecars — safe to drop into a cloud-synced
+ * folder. Skips if a snapshot for today already exists (idempotent).
+ *
+ * Returns { written: bool, path, pruned: number } so the caller can log it.
+ * Errors bubble up — caller wraps in try/catch since this runs on startup
+ * and a missing Documents folder shouldn't keep the app from launching.
+ */
+function runDailyBackup({ targetDir, keep = 14 } = {}) {
+  if (!targetDir) throw new Error('targetDir is required');
+  if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+
+  const today = new Date();
+  const stamp = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const filename = `app-${stamp}.db`;
+  const full = path.join(targetDir, filename);
+
+  let written = false;
+  if (!fs.existsSync(full)) {
+    // Write to a .tmp and rename so a partial file never appears as today's
+    // backup. VACUUM INTO requires the target not to exist.
+    const tmp = `${full}.tmp`;
+    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+    db.prepare(`VACUUM INTO ?`).run(tmp);
+    fs.renameSync(tmp, full);
+    written = true;
+  }
+
+  // Prune — keep the `keep` newest app-*.db files, delete the rest.
+  const files = fs.readdirSync(targetDir)
+    .filter(f => /^app-\d{4}-\d{2}-\d{2}\.db$/.test(f))
+    .sort()                  // lexicographic == chronological for ISO dates
+    .reverse();              // newest first
+  const toDelete = files.slice(keep);
+  for (const f of toDelete) {
+    try { fs.unlinkSync(path.join(targetDir, f)); } catch (_) { /* ignore */ }
+  }
+
+  return { written, path: full, pruned: toDelete.length };
+}
+
 // ----- aggregates for the daily/recent view -----
 
 function dailyTotals({ days = 7 } = {}) {
@@ -249,6 +294,51 @@ function dailyTotals({ days = 7 } = {}) {
   `).all(days);
 }
 
+// Mon–Sun buckets, keyed by the Monday date. SQLite has no direct ISO-week
+// function, so we shift each start_at backwards to the Monday of its week:
+//   shift = (dow + 6) % 7   where dow is %w (0=Sun … 6=Sat)
+// That gives Mon=0, Tue=1, … Sun=6, so subtracting it always lands on Monday.
+function weeklyTotals({ weeks = 8 } = {}) {
+  return db.prepare(`
+    SELECT
+      date(
+        start_at,
+        'localtime',
+        '-' || ((CAST(strftime('%w', start_at, 'localtime') AS INTEGER) + 6) % 7) || ' days'
+      ) AS week_start,
+      COUNT(*) AS sessions,
+      SUM(
+        CASE WHEN end_at IS NULL THEN 0
+        ELSE (julianday(end_at) - julianday(start_at)) * 24.0
+        END
+      ) AS hours
+    FROM sessions
+    GROUP BY week_start
+    ORDER BY week_start DESC
+    LIMIT ?
+  `).all(weeks);
+}
+
+// Hours-by-client over the last N days. Joins sessions to the tickets cache
+// to pick up client_name; sessions for tickets no longer in the cache (or
+// unassigned quick-logs) bucket under "(unassigned)". Only completed sessions
+// are counted.
+function hoursByClient({ days = 30 } = {}) {
+  const cutoff = `-${Number(days) || 30} days`;
+  return db.prepare(`
+    SELECT
+      COALESCE(NULLIF(t.client_name, ''), '(unassigned)') AS client_name,
+      COUNT(*) AS sessions,
+      SUM((julianday(s.end_at) - julianday(s.start_at)) * 24.0) AS hours
+    FROM sessions s
+    LEFT JOIN tickets t ON t.id = s.ticket_id
+    WHERE s.end_at IS NOT NULL
+      AND date(s.start_at, 'localtime') >= date('now', 'localtime', ?)
+    GROUP BY client_name
+    ORDER BY hours DESC
+  `).all(cutoff);
+}
+
 module.exports = {
   init,
   getSetting,
@@ -265,5 +355,8 @@ module.exports = {
   listUnsyncedSessions,
   markSessionSynced,
   dailyTotals,
+  weeklyTotals,
+  hoursByClient,
   quickLogSession,
+  runDailyBackup,
 };

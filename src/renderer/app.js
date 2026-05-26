@@ -125,6 +125,7 @@ async function refreshAll() {
     loadSessions(),
     loadRunning(),
     loadDailyTotals(),
+    loadWeeklySummary(),
     loadPrefs(),
     loadStatuses(),
   ]);
@@ -999,10 +1000,87 @@ async function loadDailyTotals() {
   }
 }
 
+// ---------- weekly summary ----------
+
+async function loadWeeklySummary() {
+  await Promise.all([loadWeeklyTotals(), loadHoursByClient()]);
+}
+
+// "YYYY-MM-DD" → local Date (avoids the UTC-shift you get from `new Date(str)`).
+function parseLocalDate(ymd) {
+  if (!ymd) return null;
+  const [y, m, d] = ymd.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  return new Date(y, m - 1, d);
+}
+
+async function loadWeeklyTotals() {
+  const rows = await callApi('weeklyTotals', { weeks: 8 });
+  const tbody = $('#weekly-body');
+  const empty = $('#weekly-empty');
+  tbody.innerHTML = '';
+  if (!rows || rows.length === 0) {
+    show(empty);
+    return;
+  }
+  hide(empty);
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const d = parseLocalDate(r.week_start);
+    const weekLabel = d
+      ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      : (r.week_start || '—');
+    tr.innerHTML = `
+      <td>${escape(weekLabel)}</td>
+      <td>${r.sessions || 0}</td>
+      <td>${(r.hours || 0).toFixed(2)}h</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+async function loadHoursByClient() {
+  const rows = await callApi('hoursByClient', { days: 30 });
+  const tbody = $('#client-hours-body');
+  const empty = $('#client-hours-empty');
+  tbody.innerHTML = '';
+  if (!rows || rows.length === 0) {
+    show(empty);
+    return;
+  }
+  hide(empty);
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${escape(r.client_name || '(unassigned)')}</td>
+      <td>${r.sessions || 0}</td>
+      <td>${(r.hours || 0).toFixed(2)}h</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
 // ---------- preferences ----------
 
 async function loadPrefs() {
   state.prefs = await callApi('getPrefs');
+  applyQuickLogButtonLabels();
+}
+
+// Quick-log buttons show whatever the user configured in prefs — minute label
+// and (if set) the hotkey accelerator in the tooltip.
+function applyQuickLogButtonLabels() {
+  const minutes = state.prefs?.quickLogMinutes || [5, 10, 15];
+  const hotkeys = state.prefs?.hotkeys || {};
+  const buttons = $$('#quick-log-bar .quick-log-btn');
+  buttons.forEach((btn, i) => {
+    const m = minutes[i];
+    if (!Number.isFinite(m)) return;
+    btn.dataset.minutes = String(m);
+    btn.textContent = `+${m} min`;
+    const accel = hotkeys[`quickLog${i + 1}`] || '';
+    btn.title = accel || '';
+  });
 }
 
 async function showSettingsModal() {
@@ -1021,6 +1099,16 @@ async function showSettingsModal() {
     el.checked = days.has(el.dataset.weekday);
   });
 
+  // Quick-log durations
+  const ql = Array.isArray(p.quickLogMinutes) ? p.quickLogMinutes : [5, 10, 15];
+  $('#pref-quick-1').value = ql[0] ?? 5;
+  $('#pref-quick-2').value = ql[1] ?? 10;
+  $('#pref-quick-3').value = ql[2] ?? 15;
+
+  // Hotkeys — render the current accelerator into each button's label
+  _pendingHotkeys = { ...(p.hotkeys || {}) };
+  refreshHotkeyButtons();
+
   try {
     const al = await callApi('getAutoLaunch');
     state.autoLaunch = !!al.enabled;
@@ -1029,17 +1117,180 @@ async function showSettingsModal() {
     $('#pref-autolaunch').checked = false;
   }
 
+  await populateAboutSection();
+
   $('#settings-modal-error').textContent = '';
   show($('#settings-modal'));
 }
 
-$('#settings-modal-cancel').addEventListener('click', () => hide($('#settings-modal')));
+// Cached app info so we don't re-hit IPC every time the modal opens.
+let _appInfo = null;
+
+async function populateAboutSection() {
+  try {
+    if (!_appInfo) _appInfo = await callApi('getAppInfo');
+    $('#about-version').textContent = `${_appInfo.version}${_appInfo.isPackaged ? '' : ' (dev)'}`;
+  } catch (_) {
+    $('#about-version').textContent = 'unknown';
+  }
+  // Leave the status line alone if we already received a live update from main;
+  // only reset it when the user re-opens the modal cold.
+  if (!_lastUpdateStatusAt) {
+    $('#about-update-status').textContent = 'Not checked yet.';
+  }
+}
+
+let _lastUpdateStatusAt = null;
+
+window.api.onUpdateStatus((payload) => {
+  _lastUpdateStatusAt = payload?.at || new Date().toISOString();
+  const el = document.getElementById('about-update-status');
+  if (el) el.textContent = payload?.message || '';
+});
+
+$('#about-check-updates').addEventListener('click', async () => {
+  const btn = $('#about-check-updates');
+  btn.disabled = true;
+  $('#about-update-status').textContent = 'Checking for updates…';
+  try {
+    const res = await callApi('checkForUpdates');
+    if (res.skipped) {
+      // Dev builds — no installer to compare against. Be explicit.
+      $('#about-update-status').textContent = res.reason || 'Update checks are only available in packaged builds.';
+    } else if (res.updateVersion && res.updateVersion !== res.currentVersion) {
+      $('#about-update-status').textContent = `Version ${res.updateVersion} available — downloading in the background.`;
+    } else {
+      $('#about-update-status').textContent = "You're on the latest version.";
+    }
+  } catch (_) { /* toast already shown */ }
+  finally { btn.disabled = false; }
+});
+
+$('#about-release-notes').addEventListener('click', () => {
+  callApi('openReleaseNotes').catch(() => {});
+});
+
+$('#about-open-logs').addEventListener('click', () => {
+  callApi('openLogFolder').catch(() => {});
+});
+
+$('#about-open-backups').addEventListener('click', () => {
+  callApi('openBackupFolder').catch(() => {});
+});
+
+// ---------- hotkey capture ----------
+
+// Working copy of the hotkey accelerators while the Settings modal is open.
+// Committed to prefs on save, discarded on cancel.
+let _pendingHotkeys = {};
+let _recordingHotkey = null;
+
+const HOTKEY_FIELDS = ['showApp', 'quickLog1', 'quickLog2', 'quickLog3'];
+const HOTKEY_MODIFIERS = new Set(['Control', 'Ctrl', 'Alt', 'Shift', 'Super', 'Meta', 'Command', 'Cmd', 'CommandOrControl', 'CmdOrCtrl', 'Option', 'AltGr']);
+
+function refreshHotkeyButtons() {
+  for (const field of HOTKEY_FIELDS) {
+    const btn = document.querySelector(`.hotkey-btn[data-hotkey="${field}"]`);
+    if (!btn) continue;
+    btn.classList.toggle('recording', _recordingHotkey === field);
+    if (_recordingHotkey === field) {
+      btn.textContent = 'Press keys… (Esc to cancel)';
+    } else {
+      btn.textContent = _pendingHotkeys[field] || '(disabled)';
+    }
+  }
+}
+
+// Translate a KeyboardEvent into an Electron accelerator. Returns null if the
+// key combo is incomplete (e.g. user just pressed a modifier on its own).
+function eventToAccelerator(evt) {
+  const parts = [];
+  if (evt.ctrlKey)  parts.push('Control');
+  if (evt.altKey)   parts.push('Alt');
+  if (evt.shiftKey) parts.push('Shift');
+  if (evt.metaKey)  parts.push('Super');
+  const rawKey = evt.key;
+  if (!rawKey || HOTKEY_MODIFIERS.has(rawKey)) return null;
+  // Normalise common key names to Electron's accelerator format
+  let key;
+  if (rawKey === ' ') key = 'Space';
+  else if (rawKey.length === 1) key = rawKey.toUpperCase();
+  else if (/^F\d{1,2}$/.test(rawKey)) key = rawKey;
+  else if (rawKey === 'ArrowUp')    key = 'Up';
+  else if (rawKey === 'ArrowDown')  key = 'Down';
+  else if (rawKey === 'ArrowLeft')  key = 'Left';
+  else if (rawKey === 'ArrowRight') key = 'Right';
+  else key = rawKey;
+  parts.push(key);
+  if (parts.length < 2) return null;
+  return parts.join('+');
+}
+
+function startRecordingHotkey(field) {
+  _recordingHotkey = field;
+  refreshHotkeyButtons();
+}
+
+function stopRecordingHotkey() {
+  _recordingHotkey = null;
+  refreshHotkeyButtons();
+}
+
+$$('.hotkey-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const field = btn.dataset.hotkey;
+    if (!field) return;
+    if (_recordingHotkey === field) stopRecordingHotkey();
+    else startRecordingHotkey(field);
+  });
+});
+
+$$('.hotkey-clear').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const field = btn.dataset.hotkeyClear;
+    if (!field) return;
+    _pendingHotkeys[field] = '';
+    if (_recordingHotkey === field) stopRecordingHotkey();
+    else refreshHotkeyButtons();
+  });
+});
+
+// Capture key combos at the window level when a hotkey button is "recording".
+// Use capture phase so the keydown listener that closes modals on Esc doesn't
+// preempt a cancel-recording press.
+window.addEventListener('keydown', (evt) => {
+  if (!_recordingHotkey) return;
+  if (evt.key === 'Escape') {
+    evt.preventDefault();
+    evt.stopPropagation();
+    stopRecordingHotkey();
+    return;
+  }
+  if (HOTKEY_MODIFIERS.has(evt.key)) return; // wait for the non-modifier key
+  evt.preventDefault();
+  evt.stopPropagation();
+  const accel = eventToAccelerator(evt);
+  if (!accel) return;
+  _pendingHotkeys[_recordingHotkey] = accel;
+  stopRecordingHotkey();
+}, true);
+
+$('#settings-modal-cancel').addEventListener('click', () => {
+  stopRecordingHotkey();
+  hide($('#settings-modal'));
+});
 
 $('#settings-modal-save').addEventListener('click', async () => {
   const days = $$('#settings-modal input[data-weekday]')
     .filter(el => el.checked)
     .map(el => el.dataset.weekday)
     .join(',');
+
+  const quickLogMinutes = [
+    Number($('#pref-quick-1').value),
+    Number($('#pref-quick-2').value),
+    Number($('#pref-quick-3').value),
+  ];
 
   const payload = {
     idleAutoPauseEnabled: $('#pref-idle-enabled').checked,
@@ -1049,6 +1300,8 @@ $('#settings-modal-save').addEventListener('click', async () => {
     workHoursStart:       $('#pref-work-start').value || '09:00',
     workHoursEnd:         $('#pref-work-end').value   || '17:00',
     workDays:             days,
+    quickLogMinutes,
+    hotkeys:              { ..._pendingHotkeys },
   };
 
   if (payload.idleThresholdMinutes < 1 || payload.idleThresholdMinutes > 240) {
@@ -1063,6 +1316,12 @@ $('#settings-modal-save').addEventListener('click', async () => {
     $('#settings-modal-error').textContent = 'Work hours end must be after start.';
     return;
   }
+  for (const m of quickLogMinutes) {
+    if (!Number.isInteger(m) || m < 1 || m > 480) {
+      $('#settings-modal-error').textContent = 'Quick-log durations must be whole numbers between 1 and 480 minutes.';
+      return;
+    }
+  }
 
   try {
     state.prefs = await callApi('savePrefs', payload);
@@ -1073,6 +1332,9 @@ $('#settings-modal-save').addEventListener('click', async () => {
       state.autoLaunch = !!al.enabled;
     }
 
+    // Re-render the quick-log buttons with the new minute labels & tooltips.
+    applyQuickLogButtonLabels();
+    stopRecordingHotkey();
     hide($('#settings-modal'));
     toast('Settings saved.', 'success');
   } catch (_) { /* toast already shown */ }

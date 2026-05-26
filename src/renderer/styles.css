@@ -447,6 +447,63 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 }
 .weekdays .checkbox { flex-direction: row; align-items: center; gap: 6px; margin-top: 0; color: var(--text); }
 
+/* ---- Weekly summary ---- */
+
+.weekly-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+}
+.weekly-col h4 { margin: 0 0 10px 0; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.summary-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+}
+.summary-table th, .summary-table td {
+  text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+.summary-table th { color: var(--muted); font-weight: 500; font-size: 12px; }
+.summary-table td:nth-child(2), .summary-table td:nth-child(3),
+.summary-table th:nth-child(2), .summary-table th:nth-child(3) {
+  text-align: right; font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) {
+  .weekly-grid { grid-template-columns: 1fr; }
+}
+
+/* ---- Hotkey capture ---- */
+
+.hotkey-row {
+  display: grid; grid-template-columns: 1fr auto auto;
+  gap: 10px; align-items: center;
+  padding: 6px 0; border-bottom: 1px dashed var(--border);
+}
+.hotkey-row:last-of-type { border-bottom: 0; }
+.hotkey-label { color: var(--text); font-size: 13px; }
+.hotkey-btn {
+  min-width: 180px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
+}
+.hotkey-btn:hover { border-color: var(--accent); }
+.hotkey-btn.recording {
+  border-color: var(--accent); color: var(--accent);
+  background: rgba(79, 140, 255, 0.08);
+  animation: hotkey-pulse 1.2s ease-in-out infinite;
+}
+@keyframes hotkey-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 140, 255, 0.4); }
+  50%      { box-shadow: 0 0 0 4px rgba(79, 140, 255, 0); }
+}
+.hotkey-clear { font-size: 12px; padding: 6px 10px; }
+
+.about-row {
+  display: flex; justify-content: space-between; align-items: baseline;
+  padding: 6px 0; border-bottom: 1px dashed var(--border);
+}
+.about-row:last-of-type { border-bottom: 0; }
+.about-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.about-actions { flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+
 /* ---- Toast ---- */
 
 .toast {

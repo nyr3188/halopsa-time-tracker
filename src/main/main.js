@@ -2,7 +2,24 @@
 
 const { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, nativeImage } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const log = require('electron-log/main');
 const path = require('path');
+
+// Persistent log under <userData>/logs/main.log. Rotates at 5 MB; keeps the
+// previous file as main.old.log. Reachable from the Settings → About section
+// via "Open log folder".
+log.transports.file.resolvePathFn = () =>
+  path.join(app.getPath('userData'), 'logs', 'main.log');
+log.transports.file.maxSize = 5 * 1024 * 1024;
+log.initialize();
+// Surface uncaught errors and renderer console output into the same log file
+// so a crash report has a single source of truth.
+log.errorHandler.startCatching({ showDialog: false });
+log.eventLogger.startLogging();
+log.info(`App start — version ${app.getVersion()} (packaged=${app.isPackaged})`);
+
+// electron-updater logs through whatever logger we give it.
+autoUpdater.logger = log;
 
 const db = require('./db');
 const { CredentialStore } = require('./credentials');
@@ -31,6 +48,15 @@ if (!gotTheLock) {
   app.on('second-instance', () => {
     showWindow();
   });
+}
+
+function broadcastUpdateStatus(state, message) {
+  log.info(`[updater] ${state}: ${message}`);
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('update:status', { state, message, at: new Date().toISOString() });
+    }
+  }
 }
 
 function trayIconPath(alert = false) {
@@ -107,8 +133,10 @@ function refreshTrayState() {
     template.push({ type: 'separator' });
     template.push({
       label: 'Quick log',
-      submenu: QUICK_LOG_PRESETS.map(({ minutes, accelerator }) => ({
-        label: `+${minutes} min\t${accelerator.replace('Control', 'Ctrl')}`,
+      submenu: getQuickLogPresets().map(({ minutes, accelerator }) => ({
+        label: accelerator
+          ? `+${minutes} min\t${accelerator.replace('Control', 'Ctrl')}`
+          : `+${minutes} min`,
         click: () => handleQuickLog(minutes),
       })),
     });
@@ -179,11 +207,17 @@ function showWindow() {
   mainWindow.focus();
 }
 
-const QUICK_LOG_PRESETS = [
-  { accelerator: 'Control+Alt+1', minutes: 5 },
-  { accelerator: 'Control+Alt+2', minutes: 10 },
-  { accelerator: 'Control+Alt+3', minutes: 15 },
-];
+// Quick-log presets are user-configurable. Built fresh from prefs each time —
+// the tray menu and globalShortcut registrations both call this.
+function getQuickLogPresets() {
+  const prefs = readPrefs();
+  const minutes = prefs.quickLogMinutes || [5, 10, 15];
+  const hotkeys = prefs.hotkeys || {};
+  return [0, 1, 2].map(i => ({
+    minutes: minutes[i],
+    accelerator: hotkeys[`quickLog${i + 1}`] || '',
+  }));
+}
 
 function focusSearch() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -219,17 +253,28 @@ function handleQuickLog(minutes) {
 }
 
 function registerGlobalHotkeys() {
-  // Ctrl+Alt+T — show window and drop focus into the picker search box.
+  // Reset everything first — this function is also called when prefs change,
+  // so old accelerators need to come off before new ones go on.
+  try { globalShortcut.unregisterAll(); } catch (_) { /* ignore */ }
+
+  const prefs = readPrefs();
+  const showApp = prefs.hotkeys?.showApp || '';
+
+  // Ctrl+Alt+T (or whatever the user picked) — show window and drop focus
+  // into the picker search box. Blank string = explicitly disabled.
   // If registration fails (another app holds it), fail silently so the rest
   // of the app keeps working; users can still launch via the tray icon.
-  try {
-    globalShortcut.register('Control+Alt+T', () => {
-      showWindow();
-      focusSearch();
-    });
-  } catch (_) { /* hotkey unavailable — ignore */ }
+  if (showApp) {
+    try {
+      globalShortcut.register(showApp, () => {
+        showWindow();
+        focusSearch();
+      });
+    } catch (_) { /* hotkey unavailable — ignore */ }
+  }
 
-  for (const { accelerator, minutes } of QUICK_LOG_PRESETS) {
+  for (const { accelerator, minutes } of getQuickLogPresets()) {
+    if (!accelerator) continue;
     try {
       globalShortcut.register(accelerator, () => handleQuickLog(minutes));
     } catch (_) { /* ignore */ }
@@ -262,6 +307,20 @@ app.whenReady().then(() => {
   db.init(userDataDir);
   creds = new CredentialStore(userDataDir);
 
+  // Daily DB snapshot into <Documents>/HaloPSA Time Tracker/backups/. Lands
+  // in OneDrive's Documents folder if the user has it synced, so the SQLite
+  // file gets versioned cloud history without exposing the live DB (and its
+  // WAL sidecars) to sync corruption. Kept to the 14 most recent files.
+  try {
+    const backupDir = path.join(app.getPath('documents'), 'HaloPSA Time Tracker', 'backups');
+    const result = db.runDailyBackup({ targetDir: backupDir, keep: 14 });
+    if (result.written) {
+      log.info(`DB backup written: ${result.path} (pruned ${result.pruned} older snapshots)`);
+    }
+  } catch (err) {
+    log.warn('DB backup failed (continuing):', err);
+  }
+
   createWindow();
   createTray();
 
@@ -280,6 +339,11 @@ app.whenReady().then(() => {
     getMainWindow: () => mainWindow,
     showMainWindow: showWindow,
     onSessionChanged: refreshTrayState,
+    onPrefsChanged: () => {
+      // Re-apply user-configurable accelerators + refresh tray submenu labels.
+      registerGlobalHotkeys();
+      refreshTrayState();
+    },
   });
 
   nudgeEngine.start();
@@ -299,9 +363,22 @@ app.whenReady().then(() => {
   // launch (gives the UI time to settle); then every 4 hours.
   // Wrapped in catches so a transient network failure can't crash the app.
   // Skipped in dev (no installer to update).
+  autoUpdater.autoDownload = true;
+  autoUpdater.on('checking-for-update', () => broadcastUpdateStatus('checking', 'Checking for updates…'));
+  autoUpdater.on('update-available', (info) =>
+    broadcastUpdateStatus('available', `Version ${info?.version || ''} available — downloading…`));
+  autoUpdater.on('update-not-available', () =>
+    broadcastUpdateStatus('current', 'You\'re on the latest version.'));
+  autoUpdater.on('download-progress', (p) =>
+    broadcastUpdateStatus('downloading', `Downloading… ${Math.round(p.percent || 0)}%`));
+  autoUpdater.on('update-downloaded', (info) =>
+    broadcastUpdateStatus('downloaded', `Version ${info?.version || ''} ready — will install on next quit.`));
+  autoUpdater.on('error', (err) => {
+    log.error('Updater error:', err);
+    broadcastUpdateStatus('error', err?.message || 'Update check failed.');
+  });
+
   if (app.isPackaged) {
-    autoUpdater.autoDownload = true;
-    autoUpdater.on('error', (err) => console.error('Updater error:', err));
     setTimeout(() => {
       autoUpdater.checkForUpdatesAndNotify().catch(() => {});
     }, 10_000);

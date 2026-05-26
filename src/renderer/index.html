@@ -163,6 +163,36 @@
         <div class="panel-header"><h2>Daily totals (last 7 days)</h2></div>
         <div id="daily-totals"></div>
       </section>
+
+      <!-- Weekly summary + hours by client -->
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Weekly summary</h2>
+          <span class="muted">Last 8 weeks · hours by client over the last 30 days</span>
+        </div>
+        <div class="weekly-grid">
+          <div class="weekly-col">
+            <h4 class="muted">Hours by week</h4>
+            <table class="summary-table">
+              <thead>
+                <tr><th>Week of</th><th>Sessions</th><th>Hours</th></tr>
+              </thead>
+              <tbody id="weekly-body"></tbody>
+            </table>
+            <p id="weekly-empty" class="muted center hidden">No completed sessions yet.</p>
+          </div>
+          <div class="weekly-col">
+            <h4 class="muted">Hours by client (30 days)</h4>
+            <table class="summary-table">
+              <thead>
+                <tr><th>Client</th><th>Sessions</th><th>Hours</th></tr>
+              </thead>
+              <tbody id="client-hours-body"></tbody>
+            </table>
+            <p id="client-hours-empty" class="muted center hidden">No completed sessions in the last 30 days.</p>
+          </div>
+        </div>
+      </section>
     </section>
 
     <!-- Stop modal: prompts for note and optional status change -->
@@ -302,6 +332,79 @@
             <label class="checkbox"><input type="checkbox" data-weekday="6" /> Sat</label>
             <label class="checkbox"><input type="checkbox" data-weekday="0" /> Sun</label>
           </div>
+        </fieldset>
+
+        <fieldset class="prefs-group">
+          <legend>Quick-log durations</legend>
+          <p class="muted hint">
+            How many minutes each quick-log button (and hotkey) logs.
+            Each entry must be between 1 and 480 minutes.
+          </p>
+          <div class="prefs-row">
+            <label>
+              Button 1 (Ctrl+Alt+1)
+              <input type="number" id="pref-quick-1" min="1" max="480" />
+            </label>
+            <label>
+              Button 2 (Ctrl+Alt+2)
+              <input type="number" id="pref-quick-2" min="1" max="480" />
+            </label>
+            <label>
+              Button 3 (Ctrl+Alt+3)
+              <input type="number" id="pref-quick-3" min="1" max="480" />
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset class="prefs-group">
+          <legend>Global hotkeys</legend>
+          <p class="muted hint">
+            Click a slot and press the key combo you want. Must include at least one
+            modifier (Ctrl, Alt, Shift, or Super) and one regular key. Click <em>Clear</em>
+            to disable a hotkey.
+          </p>
+          <div class="hotkey-row">
+            <span class="hotkey-label">Show app + focus search</span>
+            <button type="button" class="hotkey-btn" data-hotkey="showApp">Click to set</button>
+            <button type="button" class="hotkey-clear ghost" data-hotkey-clear="showApp">Clear</button>
+          </div>
+          <div class="hotkey-row">
+            <span class="hotkey-label">Quick-log button 1</span>
+            <button type="button" class="hotkey-btn" data-hotkey="quickLog1">Click to set</button>
+            <button type="button" class="hotkey-clear ghost" data-hotkey-clear="quickLog1">Clear</button>
+          </div>
+          <div class="hotkey-row">
+            <span class="hotkey-label">Quick-log button 2</span>
+            <button type="button" class="hotkey-btn" data-hotkey="quickLog2">Click to set</button>
+            <button type="button" class="hotkey-clear ghost" data-hotkey-clear="quickLog2">Clear</button>
+          </div>
+          <div class="hotkey-row">
+            <span class="hotkey-label">Quick-log button 3</span>
+            <button type="button" class="hotkey-btn" data-hotkey="quickLog3">Click to set</button>
+            <button type="button" class="hotkey-clear ghost" data-hotkey-clear="quickLog3">Clear</button>
+          </div>
+        </fieldset>
+
+        <fieldset class="prefs-group">
+          <legend>About</legend>
+          <div class="about-row">
+            <span class="muted">Version</span>
+            <strong id="about-version">—</strong>
+          </div>
+          <div class="about-row">
+            <span class="muted">Update status</span>
+            <span id="about-update-status">Not checked yet.</span>
+          </div>
+          <div class="actions about-actions">
+            <button type="button" id="about-check-updates" class="ghost">Check for updates</button>
+            <button type="button" id="about-release-notes" class="ghost">Release notes</button>
+            <button type="button" id="about-open-logs" class="ghost">Open log folder</button>
+            <button type="button" id="about-open-backups" class="ghost">Open backup folder</button>
+          </div>
+          <p class="muted hint">
+            Daily database snapshots are written to <em>Documents → HaloPSA Time Tracker → backups</em>,
+            keeping the most recent 14 copies. If Documents is synced to OneDrive, your backups go with it.
+          </p>
         </fieldset>
 
         <div class="actions">

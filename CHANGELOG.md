@@ -5,6 +5,106 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.9.1 — Fix "Start with Windows" checkbox state
+
+### Fixed
+- **"Start with Windows" checkbox no longer forgets its state.** Saving
+  the preference with the box checked, then closing and reopening
+  Settings, would render the box unchecked even though the registry
+  entry was still in place. Root cause: `app.setLoginItemSettings` was
+  writing the entry with `args: ['--hidden']`, but the matching
+  `app.getLoginItemSettings()` call was made with no options — so
+  Electron compared the registry entry against an empty args array,
+  failed to match, and reported `openAtLogin: false`. Both the get and
+  set handlers now use a shared
+  `{ path: process.execPath, args: ['--hidden'] }` options object so the
+  read reflects what was written.
+
+### Notes
+- The actual auto-launch behavior was always wired correctly — only the
+  UI's read-back was broken. If you had the checkbox enabled on 0.9.0,
+  the registry entry was real and Windows would have honored it on next
+  reboot; the box just looked unchecked when you reopened Settings.
+
+---
+
+## 0.9.0 — Weekly summary, custom hotkeys, configurable quick-logs
+
+### Added
+- **Weekly summary panel.** Sits below Daily totals and shows two
+  views side-by-side:
+  - **Hours by week** — Mon–Sun buckets for the last 8 weeks, keyed
+    by the Monday of each week. Bucketing is local-date aware, so an
+    evening session never lands in the wrong week.
+  - **Hours by client (30 days)** — completed sessions grouped by the
+    ticket's client name, sorted by total hours. Quick-logs and
+    sessions whose ticket is no longer in the cache fall under
+    "(unassigned)".
+- **Configurable quick-log durations.** A new **Quick-log durations**
+  fieldset in Settings lets you set the minutes logged by each of
+  the three buttons (and their hotkeys). Each entry must be between
+  1 and 480 minutes. The quick-log bar updates its labels and
+  tooltips immediately when saved.
+- **Custom global hotkeys.** A new **Global hotkeys** fieldset in
+  Settings lets you rebind each of the four global shortcuts —
+  show-app-and-focus-search and the three quick-log buttons. Click
+  a slot, press the combo you want (modifier + key), and the new
+  accelerator registers on save with no app restart. Use **Clear**
+  to disable a hotkey entirely.
+
+### Changed
+- The tray's Quick-log submenu now reads its labels and accelerator
+  hints from your configured durations and hotkeys.
+
+---
+
+## 0.8.0 — Logging, About panel, and daily DB backups
+
+### Added
+- **electron-log wired into the main process.** Persistent log file at
+  `%APPDATA%/halopsa-time-tracker/logs/main.log` (rotates at 5 MB,
+  keeps the previous file as `main.old.log`). Uncaught errors and
+  electron-updater events stream into the same file so a crash report
+  has a single source of truth. The `autoUpdater` instance now logs
+  through the same transport — its previous `console.error` was
+  invisible in packaged builds.
+- **About section in Settings.** A new fieldset shows the running
+  version (with `(dev)` suffix in `npm start`), live update status
+  (Checking… / Available / Downloading N% / Ready on next quit / On
+  the latest version / errors), and four buttons:
+  - **Check for updates** — triggers an immediate `checkForUpdates`
+    call. In dev builds, surfaces "Update checks are only available
+    in packaged builds" instead of failing silently.
+  - **Release notes** — opens the GitHub Releases page in the
+    default browser.
+  - **Open log folder** — opens `userData/logs/` in Explorer.
+  - **Open backup folder** — opens the Documents backup folder
+    described below.
+- **Daily database snapshots to Documents.** On every app start, the
+  DB is copied via `VACUUM INTO` to
+  `Documents/HaloPSA Time Tracker/backups/app-YYYY-MM-DD.db`. The
+  copy is a clean, defragmented single file (no WAL sidecars), so
+  it's safe for OneDrive / Dropbox / whatever else syncs Documents.
+  Idempotent — re-launching the app the same day is a no-op. The 14
+  most recent snapshots are kept; older ones are pruned. The live DB
+  stays in `userData/` to avoid cloud-sync corruption.
+
+### Changed
+- `autoUpdater` event hooks (`checking-for-update`,
+  `update-available`, `download-progress`, `update-downloaded`,
+  `update-not-available`, `error`) now broadcast a structured
+  `update:status` IPC event to all windows so the About panel can
+  reflect download progress live.
+
+### Notes
+- The live DB has not moved — it's still under `userData/`, where
+  WAL sidecar files belong on a local disk. Cloud sync of the live
+  WAL files is what causes SQLite corruption; copying the
+  `VACUUM INTO` output into a synced folder gives you versioned
+  history without that risk.
+
+---
+
 ## 0.7.1 — Branded icon
 
 ### Changed
