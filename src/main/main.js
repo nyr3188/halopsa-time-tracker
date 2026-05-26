@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, Notification, dialog, globalShortcut, nativeImage } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const log = require('electron-log/main');
 const path = require('path');
@@ -70,12 +70,56 @@ function trayIconPath(alert = false) {
 // poke us again.
 let _trayAlert = false;
 
+// If an update finishes downloading while the nudge popup is on screen, hold
+// the prompt here and re-fire it when the popup closes — avoids stacking two
+// dialogs on top of each other.
+let _pendingUpdate = null;
+
 function setTrayAlert(on) {
+  const wasAlert = _trayAlert;
   _trayAlert = !!on;
-  if (!tray) return;
-  const icon = nativeImage.createFromPath(trayIconPath(_trayAlert));
-  if (!icon.isEmpty()) tray.setImage(icon);
-  refreshTrayState();
+  if (tray) {
+    const icon = nativeImage.createFromPath(trayIconPath(_trayAlert));
+    if (!icon.isEmpty()) tray.setImage(icon);
+    refreshTrayState();
+  }
+  // Nudge popup just closed — release any deferred update prompt.
+  if (wasAlert && !_trayAlert && _pendingUpdate) {
+    const info = _pendingUpdate;
+    _pendingUpdate = null;
+    promptForUpdate(info);
+  }
+}
+
+function promptForUpdate(info) {
+  if (!info) return;
+  // Don't stack on top of the nudge popup — hold the prompt and let
+  // setTrayAlert fire it once the nudge closes.
+  if (_trayAlert) {
+    _pendingUpdate = info;
+    return;
+  }
+  // Make sure the user sees the dialog even if the main window is hidden to
+  // tray. Re-creates the window if it was destroyed.
+  showWindow();
+  dialog.showMessageBox(mainWindow, {
+    type: 'info',
+    buttons: ['Restart now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+    title: 'Update ready',
+    message: `Version ${info.version || ''} is ready to install.`,
+    detail: 'Restart now to apply the update, or it\'ll install automatically the next time you quit the app.',
+  }).then(({ response }) => {
+    if (response === 0) {
+      // Bypass the close→hide-to-tray handler so quitAndInstall actually
+      // takes the app down.
+      isQuitting = true;
+      autoUpdater.quitAndInstall();
+    }
+  }).catch((err) => {
+    log.error('Update dialog failed:', err);
+  });
 }
 
 function fmtElapsed(startIso) {
@@ -377,8 +421,10 @@ app.whenReady().then(() => {
     broadcastUpdateStatus('current', 'You\'re on the latest version.'));
   autoUpdater.on('download-progress', (p) =>
     broadcastUpdateStatus('downloading', `Downloading… ${Math.round(p.percent || 0)}%`));
-  autoUpdater.on('update-downloaded', (info) =>
-    broadcastUpdateStatus('downloaded', `Version ${info?.version || ''} ready — will install on next quit.`));
+  autoUpdater.on('update-downloaded', (info) => {
+    broadcastUpdateStatus('downloaded', `Version ${info?.version || ''} ready — will install on next quit.`);
+    promptForUpdate(info);
+  });
   autoUpdater.on('error', (err) => {
     log.error('Updater error:', err);
     broadcastUpdateStatus('error', err?.message || 'Update check failed.');

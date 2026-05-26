@@ -5,6 +5,45 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.9.4 — "Restart now" prompt when an update finishes downloading
+
+### Added
+- **Restart-now / Later dialog when an update is downloaded.** Previously
+  the only signal that 0.9.x → 0.9.(x+1) was waiting to install was the
+  status line in Settings → About, and the install happened silently on
+  the next time the user actually quit the app. For a tray-resident app
+  that's rarely quit, that meant updates could sit downloaded for days.
+  Now a native dialog appears as soon as the download finishes:
+
+  > **Update ready**
+  > Version X.Y.Z is ready to install.
+  > Restart now to apply the update, or it'll install automatically the
+  > next time you quit the app.
+  > [Restart now] [Later]
+
+  **Restart now** calls `autoUpdater.quitAndInstall()` immediately (with
+  `isQuitting = true` so the close handler doesn't intercept the quit
+  and hide the window to tray instead). **Later** is a no-op — the
+  existing on-quit install path still runs.
+- **Dialog defers itself if the nudge popup is already on screen.** A
+  pending-update slot holds the `update-downloaded` info, and
+  `setTrayAlert(false)` (which fires when the nudge popup closes) flushes
+  it. Two modal dialogs stacked on top of each other is no fun.
+- The main window is shown before the dialog opens, so a user who's been
+  working with the app hidden in the tray actually sees the prompt
+  instead of just a taskbar flash.
+
+### Notes
+- The About panel's status line still updates ("Version X.Y.Z ready —
+  will install on next quit"), so users who dismiss the dialog can still
+  see the state at a glance.
+- A running timer survives `quitAndInstall` — the session's `start_at`
+  is in SQLite and gets picked back up on relaunch. The ~5-10s of clock
+  time lost during the install is below Halo's minute-rounding, so it's
+  functionally invisible on push.
+
+---
+
 ## 0.9.3 — Scrollable Settings modal
 
 ### Fixed
