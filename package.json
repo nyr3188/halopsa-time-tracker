@@ -1,0 +1,56 @@
+{
+  "name": "halopsa-time-tracker",
+  "version": "0.7.0",
+  "description": "Desktop time tracker that syncs with HaloPSA tickets and project tasks",
+  "main": "src/main/main.js",
+  "author": "Eric Roitman",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "build:dir": "electron-builder --win --dir",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "electron-updater": "^6.3.0"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^25.0.5",
+    "@electron/rebuild": "^3.6.0"
+  },
+  "build": {
+    "appId": "com.eroitman.halopsa-time-tracker",
+    "productName": "HaloPSA Time Tracker",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "nyr3188",
+        "repo": "halopsa-time-tracker"
+      }
+    ]
+  }
+}

@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <title>HaloPSA Time Tracker</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- First-run / Change-connection view (full screen) -->
+    <section id="settings-view" class="view hidden">
+      <div class="settings-card">
+        <!-- Setup form — shown on first run or when changing connection -->
+        <div id="settings-form-wrap">
+          <h1>Connect to HaloPSA</h1>
+          <p class="muted">Enter your Halo API credentials. They're stored encrypted on this machine only.</p>
+          <form id="settings-form">
+            <label>Halo URL
+              <input type="url" name="baseUrl" placeholder="https://yourcompany.halopsa.com" required />
+            </label>
+            <label>Client ID
+              <input type="text" name="clientId" autocomplete="off" required />
+            </label>
+            <label>Client Secret
+              <input type="password" name="clientSecret" autocomplete="off" required />
+            </label>
+            <label>Your Email (must match your agent record in Halo)
+              <input type="email" name="email" required />
+            </label>
+            <label>Scope
+              <input type="text" name="scope" value="all" />
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" name="includeProjects" checked />
+              Include project tasks alongside regular tickets
+            </label>
+            <div class="actions">
+              <button type="submit" class="primary">Connect</button>
+              <button type="button" id="settings-cancel" class="ghost hidden">Cancel</button>
+            </div>
+            <p class="error" id="settings-error"></p>
+          </form>
+
+          <div class="demo-divider"><span>or</span></div>
+          <div class="demo-block">
+            <h3>Try Demo Mode</h3>
+            <p class="muted">
+              Explore the app with sample tickets — no Halo connection needed.
+              All features work normally except pushing time entries.
+              You can switch to a real connection any time.
+            </p>
+            <button type="button" id="demo-enable" class="ghost">Use Demo Mode</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Main app -->
+    <section id="main-view" class="view hidden">
+      <div id="demo-banner" class="demo-banner hidden">
+        <span class="demo-banner-dot">●</span>
+        <span class="demo-banner-text">
+          <strong>Demo Mode</strong> — Sample tickets shown. Pushing to Halo is disabled.
+        </span>
+        <button id="demo-exit" class="ghost">Exit Demo Mode</button>
+      </div>
+      <header class="topbar">
+        <div class="brand">
+          <span class="brand-mark">●</span>
+          <span class="brand-text">HaloPSA Time Tracker</span>
+        </div>
+        <div class="topbar-actions">
+          <span id="conn-status" class="status muted"></span>
+          <button id="refresh-tickets" class="ghost">Refresh tickets</button>
+          <button id="open-settings" class="ghost">Settings</button>
+        </div>
+      </header>
+
+      <!-- Active timer -->
+      <section id="timer-panel" class="panel">
+        <div id="quick-log-bar" class="quick-log-bar">
+          <div class="quick-log-info">
+            <span class="quick-log-label">Quick log — for drive-by help</span>
+            <span class="quick-log-target muted">Creates an unassigned session. Edit it later to add the ticket number before pushing.</span>
+          </div>
+          <div class="quick-log-buttons">
+            <button class="quick-log-btn" data-minutes="5"  title="Ctrl+Alt+1">+5 min</button>
+            <button class="quick-log-btn" data-minutes="10" title="Ctrl+Alt+2">+10 min</button>
+            <button class="quick-log-btn" data-minutes="15" title="Ctrl+Alt+3">+15 min</button>
+          </div>
+        </div>
+        <div id="timer-idle">
+          <h2>Start a session</h2>
+
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="tickets" id="tab-tickets">
+              Tickets <span class="tab-count" id="tab-tickets-count">0</span>
+            </button>
+            <button class="tab-btn" data-tab="projects" id="tab-projects">
+              Project Tasks <span class="tab-count" id="tab-projects-count">0</span>
+            </button>
+          </div>
+
+          <div id="tab-pane-tickets" class="timer-controls">
+            <input type="search" id="ticket-search" placeholder="Search tickets by ID, summary, client, or status…" />
+            <div id="ticket-list"></div>
+            <button id="start-btn" class="primary" disabled>Start</button>
+          </div>
+
+          <div id="tab-pane-projects" class="timer-controls hidden">
+            <input type="search" id="project-search" placeholder="Search project tasks by ID, summary, or client…" />
+            <div id="project-tree"></div>
+            <button id="start-projects-btn" class="primary" disabled>Start</button>
+          </div>
+        </div>
+        <div id="timer-running" class="hidden">
+          <div class="running-info">
+            <div class="running-label">Currently tracking</div>
+            <div class="running-ticket" id="running-ticket"></div>
+            <div class="running-meta">
+              Started <span id="running-started"></span> · <span id="running-elapsed">0:00</span>
+            </div>
+          </div>
+          <div class="running-actions">
+            <button id="stop-btn" class="primary">Stop</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Sessions log -->
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Sessions</h2>
+          <div class="panel-actions">
+            <span id="unsynced-count" class="muted"></span>
+            <button id="push-all-btn" class="primary">Push all unsynced to Halo</button>
+          </div>
+        </div>
+        <div class="sessions-scroll">
+          <table class="sessions-table">
+            <thead>
+              <tr>
+                <th>Ticket</th>
+                <th>Start</th>
+                <th>End</th>
+                <th>Duration</th>
+                <th>Note</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="sessions-body"></tbody>
+          </table>
+          <p id="sessions-empty" class="muted center hidden">No sessions yet. Pick a ticket above and hit Start.</p>
+        </div>
+      </section>
+
+      <!-- Daily totals -->
+      <section class="panel">
+        <div class="panel-header"><h2>Daily totals (last 7 days)</h2></div>
+        <div id="daily-totals"></div>
+      </section>
+    </section>
+
+    <!-- Stop modal: prompts for note and optional status change -->
+    <div id="stop-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <h3>What did you work on?</h3>
+        <p class="muted" id="stop-summary"></p>
+        <label>Note
+          <textarea id="stop-note" rows="5" placeholder="Brief note for the ticket…"></textarea>
+        </label>
+        <label>Set ticket status (optional)
+          <select id="stop-status">
+            <option value="">Don't change status</option>
+          </select>
+        </label>
+        <div class="actions">
+          <button id="stop-cancel" class="ghost">Save without note</button>
+          <button id="stop-save" class="primary">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit session modal -->
+    <div id="edit-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <h3>Edit session</h3>
+        <input type="hidden" id="edit-id" />
+        <label>Ticket number
+          <input type="number" id="edit-ticket-id" min="1" placeholder="e.g. 4321" />
+        </label>
+        <p class="muted hint" id="edit-ticket-hint">
+          For quick-logged sessions, enter the ticket number you helped with.
+          The session won't push to Halo until a ticket is assigned.
+        </p>
+        <label>Start
+          <input type="datetime-local" id="edit-start" />
+        </label>
+        <label>End
+          <input type="datetime-local" id="edit-end" />
+        </label>
+        <label>Note
+          <textarea id="edit-note" rows="4"></textarea>
+        </label>
+        <label>Set ticket status on push (optional)
+          <select id="edit-status">
+            <option value="">Don't change status</option>
+          </select>
+        </label>
+        <div class="actions">
+          <button id="edit-cancel" class="ghost">Cancel</button>
+          <button id="edit-save" class="primary">Save</button>
+        </div>
+        <p class="error" id="edit-error"></p>
+      </div>
+    </div>
+
+    <!-- Settings modal (Connection + Preferences, unified) -->
+    <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card prefs-card">
+        <h3>Settings</h3>
+        <p class="muted">Manage your Halo connection and how the app behaves.</p>
+
+        <fieldset class="prefs-group">
+          <legend>Connection</legend>
+          <div class="connected-panel">
+            <div class="conn-row">
+              <span id="conn-panel-dot" class="conn-dot"></span>
+              <span id="conn-panel-title" class="conn-title">Connected to HaloPSA</span>
+            </div>
+            <div class="conn-detail"><strong>URL:</strong> <span id="conn-panel-url">—</span></div>
+            <div class="conn-detail"><strong>Signed in as:</strong> <span id="conn-panel-email">—</span></div>
+            <div class="conn-detail"><strong>Agent ID:</strong> <span id="conn-panel-agent">—</span></div>
+            <div class="actions">
+              <button type="button" id="settings-change" class="ghost">Change connection</button>
+              <button type="button" id="settings-disconnect" class="danger">Disconnect</button>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="prefs-group">
+          <legend>Startup</legend>
+          <label class="checkbox">
+            <input type="checkbox" id="pref-autolaunch" />
+            Start automatically when I log in to Windows
+          </label>
+          <p class="muted hint">
+            The app will start hidden in the system tray. Click the tray icon to open it.
+            Closing the main window also hides to tray — use the tray menu's <em>Quit</em>
+            option to exit completely.
+          </p>
+        </fieldset>
+
+        <fieldset class="prefs-group">
+          <legend>Idle auto-pause</legend>
+          <label class="checkbox">
+            <input type="checkbox" id="pref-idle-enabled" />
+            Stop the timer when I step away
+          </label>
+          <label>
+            Idle threshold (minutes)
+            <input type="number" id="pref-idle-minutes" min="1" max="240" />
+          </label>
+          <p class="muted hint">
+            When your machine is idle for this long, the running session is stopped
+            and back-dated to when idleness began. The timer also stops if your
+            machine sleeps or you lock your screen.
+          </p>
+        </fieldset>
+
+        <fieldset class="prefs-group">
+          <legend>No-timer nudge</legend>
+          <label class="checkbox">
+            <input type="checkbox" id="pref-nudge-enabled" />
+            Remind me when no timer is running
+          </label>
+          <div class="prefs-row">
+            <label>
+              Every (minutes)
+              <input type="number" id="pref-nudge-minutes" min="5" max="240" />
+            </label>
+            <label>
+              Work hours start
+              <input type="time" id="pref-work-start" />
+            </label>
+            <label>
+              Work hours end
+              <input type="time" id="pref-work-end" />
+            </label>
+          </div>
+          <div class="weekdays">
+            <span class="muted">Days</span>
+            <label class="checkbox"><input type="checkbox" data-weekday="1" /> Mon</label>
+            <label class="checkbox"><input type="checkbox" data-weekday="2" /> Tue</label>
+            <label class="checkbox"><input type="checkbox" data-weekday="3" /> Wed</label>
+            <label class="checkbox"><input type="checkbox" data-weekday="4" /> Thu</label>
+            <label class="checkbox"><input type="checkbox" data-weekday="5" /> Fri</label>
+            <label class="checkbox"><input type="checkbox" data-weekday="6" /> Sat</label>
+            <label class="checkbox"><input type="checkbox" data-weekday="0" /> Sun</label>
+          </div>
+        </fieldset>
+
+        <div class="actions">
+          <button id="settings-modal-cancel" class="ghost">Cancel</button>
+          <button id="settings-modal-save" class="primary">Save</button>
+        </div>
+        <p class="error" id="settings-modal-error"></p>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast hidden"></div>
+
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

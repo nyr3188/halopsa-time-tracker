@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" />
+  <title>HaloPSA Time Tracker — Nudge</title>
+  <style>
+    :root {
+      --bg: #1b1f24;
+      --panel: #242a31;
+      --text: #e8ecf1;
+      --muted: #8b95a3;
+      --accent: #4f8cf7;
+      --accent-hover: #6ba0ff;
+      --border: #303842;
+      --alert: #e84141;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      overflow: hidden;
+      -webkit-user-select: none;
+      user-select: none;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      height: 100vh;
+    }
+
+    .titlebar {
+      -webkit-app-region: drag;
+      padding: 10px 14px 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .titlebar .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--alert);
+      box-shadow: 0 0 6px var(--alert);
+    }
+    .titlebar .title {
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .body {
+      padding: 6px 14px 14px;
+    }
+
+    .message {
+      color: var(--muted);
+      margin: 0 0 12px;
+      line-height: 1.4;
+    }
+
+    button {
+      -webkit-app-region: no-drag;
+      font: inherit;
+      cursor: pointer;
+      border-radius: 6px;
+      padding: 7px 12px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      transition: background 0.15s, border-color 0.15s;
+    }
+    button:hover { background: #2d343c; }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: white;
+      font-weight: 600;
+    }
+    button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .start-btn {
+      width: 100%;
+      padding: 10px;
+      margin-bottom: 10px;
+      font-size: 13px;
+    }
+
+    .snooze-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--border);
+    }
+    .snooze-row label {
+      color: var(--muted);
+      margin-right: 2px;
+    }
+    select {
+      -webkit-app-region: no-drag;
+      font: inherit;
+      flex: 1;
+      padding: 6px 8px;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    /* Picker view */
+    .picker {
+      display: none;
+    }
+    .picker.active { display: block; }
+    .nudge { display: block; }
+    .nudge.hidden { display: none; }
+
+    input[type="search"] {
+      -webkit-app-region: no-drag;
+      font: inherit;
+      width: 100%;
+      padding: 7px 10px;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+    .ticket-list {
+      -webkit-app-region: no-drag;
+      width: 100%;
+      height: 140px;
+      background: var(--panel);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px;
+      font: inherit;
+      margin-bottom: 10px;
+    }
+    .picker-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .empty-state {
+      color: var(--muted);
+      font-style: italic;
+      padding: 8px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Nudge view -->
+  <div id="nudge-view" class="nudge">
+    <div class="titlebar">
+      <span class="dot"></span>
+      <span class="title" id="nudge-title">No timer running</span>
+    </div>
+    <div class="body">
+      <p class="message" id="nudge-message">You're in work hours but no timer is running. Want to start tracking?</p>
+
+      <button class="primary start-btn" id="show-picker">Start a timer</button>
+
+      <div class="snooze-row">
+        <label for="snooze-select">Snooze for</label>
+        <select id="snooze-select">
+          <option value="15">15 minutes</option>
+          <option value="60" selected>1 hour</option>
+          <option value="next-period" id="snooze-next-period" hidden>Until next work period</option>
+        </select>
+        <button id="snooze-btn">Snooze</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Ticket picker view -->
+  <div id="picker-view" class="picker">
+    <div class="titlebar">
+      <span class="title">Pick a ticket to track</span>
+    </div>
+    <div class="body">
+      <input type="search" id="ticket-search" placeholder="Search by ID, summary, or client…" />
+      <select id="ticket-list" class="ticket-list" size="6"></select>
+      <div class="picker-actions">
+        <button id="picker-back">Back</button>
+        <button class="primary" id="picker-start" disabled>Start tracking</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="nudge.js"></script>
+</body>
+</html>
