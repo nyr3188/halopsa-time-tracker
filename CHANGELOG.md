@@ -5,6 +5,36 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.9.2 — Fix broken startup after 0.9.0/0.9.1 update
+
+### Fixed
+- **App no longer gets stuck at the first-run / Connect screen after
+  updating.** 0.9.0 changed the tray menu to read quick-log durations
+  and hotkeys from preferences, which routes through `readPrefs()` in
+  `ipc.js` — and that function needs the DB handle that `registerIpc()`
+  injects. But `createTray()` was called *before* `registerIpc()`, so
+  the very first tray paint threw `Cannot read properties of null
+  (reading 'getSetting')`. As an unhandled rejection inside the
+  `app.whenReady().then(...)` chain, the throw silently aborted the
+  rest of startup — no IPC handlers got registered, no auto-updater,
+  no idle monitor, no global hotkeys. Existing installs would launch,
+  show the renderer, and then ignore every IPC call (Connect did
+  nothing, the settings panel couldn't read state, etc.).
+- `createTray()` now runs *after* `registerIpc()` so the DB handle is
+  in place by the time the tray paints. A code comment marks the
+  ordering constraint so it doesn't regress.
+
+### Notes
+- Recovery for affected installs: download the 0.9.2 installer from
+  GitHub Releases and run it manually. Auto-update from 0.9.1 won't
+  work because the auto-updater is one of the things that never
+  registered.
+- Saved Halo credentials and the local session DB are untouched —
+  re-running the installer over a broken 0.9.1 picks them right back
+  up.
+
+---
+
 ## 0.9.1 — Fix "Start with Windows" checkbox state
 
 ### Fixed

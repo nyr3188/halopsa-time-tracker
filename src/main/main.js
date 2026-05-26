@@ -322,7 +322,6 @@ app.whenReady().then(() => {
   }
 
   createWindow();
-  createTray();
 
   nudgeEngine = new NudgeEngine({
     db,
@@ -332,6 +331,11 @@ app.whenReady().then(() => {
     onPopupStateChange: (open) => setTrayAlert(open),
   });
 
+  // registerIpc must run before createTray — the tray's refreshTrayState
+  // reads prefs via ipc.js's readPrefs(), which needs the db handle that
+  // registerIpc injects. Calling createTray first throws on the very first
+  // paint, which (as an unhandled rejection inside whenReady) silently aborts
+  // the rest of startup — no IPC handlers, no auto-updater, broken UI.
   registerIpc({
     db,
     creds,
@@ -345,6 +349,8 @@ app.whenReady().then(() => {
       refreshTrayState();
     },
   });
+
+  createTray();
 
   nudgeEngine.start();
 
