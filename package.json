@@ -1,6 +1,6 @@
 {
   "name": "halopsa-time-tracker",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Desktop time tracker that syncs with HaloPSA tickets and project tasks",
   "main": "src/main/main.js",
   "author": "Eric Roitman",
@@ -27,6 +27,7 @@
     "directories": {
       "output": "dist"
     },
+    "icon": "assets/icon.ico",
     "files": [
       "src/**/*",
       "assets/**/*",

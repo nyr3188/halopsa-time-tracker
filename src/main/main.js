@@ -146,6 +146,7 @@ function createWindow() {
     title: 'HaloPSA Time Tracker',
     backgroundColor: '#111418',
     show: !startedHidden,
+    icon: path.join(__dirname, '..', '..', 'assets', 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

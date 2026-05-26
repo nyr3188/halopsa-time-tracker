@@ -5,6 +5,25 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.7.1 — Branded icon
+
+### Changed
+- **App icon, installer icon, and tray icons** now use the Nerds That
+  Care glasses overlaid on a clock face, replacing the default Electron
+  icon. The new `assets/icon.ico` is wired into `electron-builder` (for
+  the installer + packaged window icon) and into the `BrowserWindow`
+  constructor (so the dev-mode `npm start` window picks it up too).
+  Tray icons (running + alert variants, with HiDPI `@2x` companions)
+  use the same composition at 32px / 64px.
+
+### Notes
+- First release that actually exercises the auto-update path end-to-end:
+  installed 0.7.0 builds will see this 0.7.1 release within ~10s of
+  next launch (or within 4h if already running), download it in the
+  background, and apply it on next quit.
+
+---
+
 ## 0.7.0 — Auto-updates
 
 ### Added
