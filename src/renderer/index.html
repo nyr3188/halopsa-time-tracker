@@ -249,6 +249,24 @@
       </div>
     </div>
 
+    <!-- Restore-from-backup picker -->
+    <div id="restore-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card">
+        <h3>Restore from backup</h3>
+        <p class="muted">
+          Pick a snapshot to restore. Your current data will be preserved as a
+          "pre-restore" file in the app data folder. The app will restart to apply.
+        </p>
+        <div id="restore-list" class="restore-list">
+          <p class="muted" id="restore-empty">Loading backups…</p>
+        </div>
+        <div class="actions">
+          <button id="restore-cancel" class="ghost">Cancel</button>
+        </div>
+        <p class="error" id="restore-error"></p>
+      </div>
+    </div>
+
     <!-- Settings modal (Connection + Preferences, unified) -->
     <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-card prefs-card">
@@ -401,10 +419,12 @@
             <button type="button" id="about-release-notes" class="ghost">Release notes</button>
             <button type="button" id="about-open-logs" class="ghost">Open log folder</button>
             <button type="button" id="about-open-backups" class="ghost">Open backup folder</button>
+            <button type="button" id="about-restore-backup" class="ghost">Restore from backup…</button>
           </div>
           <p class="muted hint">
-            Daily database snapshots are written to <em>Documents → HaloPSA Time Tracker → backups</em>,
-            keeping the most recent 14 copies. If Documents is synced to OneDrive, your backups go with it.
+            Database snapshots are written hourly to <em>Documents → HaloPSA Time Tracker → backups</em>
+            (one file per day, overwritten in place), keeping the most recent 14 days. If Documents is
+            synced to OneDrive, your backups go with it.
           </p>
         </fieldset>
         </div><!-- /.prefs-scroll -->

@@ -521,6 +521,26 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 .about-row strong { color: var(--text); font-variant-numeric: tabular-nums; }
 .about-actions { flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 
+/* ---- Restore-from-backup picker ---- */
+
+.restore-list {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 12px 0;
+}
+.restore-row {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.restore-row:last-child { border-bottom: 0; }
+.restore-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.restore-meta strong { font-variant-numeric: tabular-nums; }
+.restore-meta .muted { font-size: 12px; }
+
 /* ---- Toast ---- */
 
 .toast {

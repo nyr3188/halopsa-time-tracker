@@ -326,6 +326,23 @@ function registerGlobalHotkeys() {
 }
 
 let trayHeartbeat = null;
+let backupHeartbeat = null;
+
+// Hourly DB snapshot into <Documents>/HaloPSA Time Tracker/backups/. The
+// daily-named file (app-YYYY-MM-DD.db) is overwritten in place on each run,
+// so the folder never grows past `keep` files — but the recovery window
+// shrinks from "yesterday or earlier" to "this hour".
+const BACKUP_INTERVAL_MS = 60 * 60 * 1000;
+
+function runBackupOnce(reason) {
+  try {
+    const backupDir = path.join(app.getPath('documents'), 'HaloPSA Time Tracker', 'backups');
+    const result = db.runBackup({ targetDir: backupDir, keep: 14 });
+    log.info(`DB backup (${reason}) written: ${result.path} (pruned ${result.pruned} older snapshots)`);
+  } catch (err) {
+    log.warn(`DB backup (${reason}) failed (continuing):`, err);
+  }
+}
 
 function createTray() {
   let icon = nativeImage.createFromPath(trayIconPath());
@@ -348,22 +365,31 @@ function createTray() {
 
 app.whenReady().then(() => {
   const userDataDir = app.getPath('userData');
+
+  // If a restore was staged on the previous run (Settings → About →
+  // Restore from backup), swap the live DB with the staged file before
+  // better-sqlite3 takes its exclusive lock. The current DB and its
+  // WAL/SHM sidecars are moved aside to app.pre-restore-<ts>.db* so a
+  // mis-fired restore is recoverable.
+  try {
+    const restored = db.applyPendingRestore(userDataDir);
+    if (restored) {
+      log.info(`Restore applied. Previous DB preserved as ${restored.preRestorePath}`);
+    }
+  } catch (err) {
+    log.error('Failed to apply pending restore (continuing with current DB):', err);
+  }
+
   db.init(userDataDir);
   creds = new CredentialStore(userDataDir);
 
-  // Daily DB snapshot into <Documents>/HaloPSA Time Tracker/backups/. Lands
-  // in OneDrive's Documents folder if the user has it synced, so the SQLite
+  // DB snapshots into <Documents>/HaloPSA Time Tracker/backups/. Lands in
+  // OneDrive's Documents folder if the user has it synced, so the SQLite
   // file gets versioned cloud history without exposing the live DB (and its
-  // WAL sidecars) to sync corruption. Kept to the 14 most recent files.
-  try {
-    const backupDir = path.join(app.getPath('documents'), 'HaloPSA Time Tracker', 'backups');
-    const result = db.runDailyBackup({ targetDir: backupDir, keep: 14 });
-    if (result.written) {
-      log.info(`DB backup written: ${result.path} (pruned ${result.pruned} older snapshots)`);
-    }
-  } catch (err) {
-    log.warn('DB backup failed (continuing):', err);
-  }
+  // WAL sidecars) to sync corruption. One snapshot per calendar day,
+  // overwritten every hour while the app is running — kept to the 14 most
+  // recent days. First snapshot fires now; hourly interval registered below.
+  runBackupOnce('startup');
 
   createWindow();
 
@@ -406,6 +432,11 @@ app.whenReady().then(() => {
   idleMonitor.start();
 
   registerGlobalHotkeys();
+
+  // Hourly backup heartbeat. setInterval drift across a sleep/resume cycle
+  // is fine — the user-visible guarantee is "within the last hour, while the
+  // app was running", and the next tick after resume catches up.
+  backupHeartbeat = setInterval(() => runBackupOnce('hourly'), BACKUP_INTERVAL_MS);
 
   // Auto-update check. electron-updater reads the publish block in
   // package.json to find GitHub Releases, downloads new installers in the
@@ -456,6 +487,10 @@ app.on('before-quit', () => {
   if (idleMonitor) idleMonitor.stop();
   if (nudgeEngine) nudgeEngine.stop();
   if (trayHeartbeat) { clearInterval(trayHeartbeat); trayHeartbeat = null; }
+  if (backupHeartbeat) { clearInterval(backupHeartbeat); backupHeartbeat = null; }
+  // Final snapshot on the way out so a clean quit always leaves the most
+  // recent state on disk, even if it's been less than an hour.
+  runBackupOnce('shutdown');
 });
 
 app.on('will-quit', () => {

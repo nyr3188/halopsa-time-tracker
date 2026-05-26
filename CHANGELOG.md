@@ -5,6 +5,53 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.10.0 — Hourly backups + restore-from-backup
+
+### Added
+- **Hourly database snapshots.** Previously the DB was copied once at app
+  start; if the app stayed open for days, the snapshot in
+  *Documents → HaloPSA Time Tracker → backups* stayed stale. Now the
+  backup heartbeat runs every hour while the app is alive, and a final
+  snapshot fires on `before-quit`, so the on-disk copy is never more
+  than an hour behind a running app — and always reflects the most
+  recent state after a clean quit. The filename stays
+  `app-YYYY-MM-DD.db` (one per calendar day, overwritten in place),
+  so the backup folder still never grows past the most recent 14 files.
+  Each write goes through `VACUUM INTO` to a `.tmp` file and then
+  atomically replaces the day's snapshot — no half-written file is
+  ever visible.
+- **Restore from backup.** Settings → About now has a
+  **Restore from backup…** button. It opens a picker listing the
+  snapshots in the backup folder, newest first, with timestamp and
+  size. Picking one shows a native confirmation dialog — on
+  **Restore and restart**, the chosen file is staged to
+  `<userData>/app.db.restore` and the app relaunches. On the next
+  launch, before `better-sqlite3` takes its exclusive lock, the live
+  DB is moved aside to `app.pre-restore-{ISO timestamp}.db` (with
+  WAL/SHM sidecars renamed alongside it) and the staged file becomes
+  the new `app.db`. Mis-fired restores are recoverable by swapping
+  the pre-restore file back manually.
+
+### Why a minor bump (0.9.x → 0.10.0)
+- Under SemVer's pre-1.0 conventions, the minor digit signals
+  user-visible new capability. Both features here qualify: hourly
+  cadence changes the on-disk freshness guarantee from "yesterday at
+  app start" to "within the last hour", and restore-from-backup is a
+  brand-new operation the user didn't have before. A patch bump
+  would have undersold them — and 0.9.x was already four patches deep.
+
+### Notes
+- Restore safety: the renderer can only pass a filename (no path
+  separators), and `db.stageRestore` validates the resolved path is
+  inside the expected backup folder before copying. The two-phase
+  swap (stage → relaunch → swap-before-init) is the only correct way
+  to replace a `better-sqlite3`-locked file at runtime.
+- An old install that updates to 0.10.0 keeps its existing snapshots
+  — the filename pattern is unchanged. The first hourly tick lands
+  an hour after the post-update launch.
+
+---
+
 ## 0.9.4 — "Restart now" prompt when an update finishes downloading
 
 ### Added

@@ -233,13 +233,17 @@ function markSessionSynced({ id, actionId }) {
  * Write a clean snapshot of the DB to `targetDir/app-YYYY-MM-DD.db`, then
  * prune to the most recent `keep` files. `VACUUM INTO` produces a single,
  * defragmented file with no WAL sidecars — safe to drop into a cloud-synced
- * folder. Skips if a snapshot for today already exists (idempotent).
+ * folder.
  *
- * Returns { written: bool, path, pruned: number } so the caller can log it.
+ * Always overwrites today's file: the caller is expected to run this hourly,
+ * so each run refreshes the snapshot. Filename intentionally stays on a
+ * per-day cadence so the backup folder never blooms past `keep` files.
+ *
+ * Returns { path, pruned: number } so the caller can log it.
  * Errors bubble up — caller wraps in try/catch since this runs on startup
  * and a missing Documents folder shouldn't keep the app from launching.
  */
-function runDailyBackup({ targetDir, keep = 14 } = {}) {
+function runBackup({ targetDir, keep = 14 } = {}) {
   if (!targetDir) throw new Error('targetDir is required');
   if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
 
@@ -248,16 +252,17 @@ function runDailyBackup({ targetDir, keep = 14 } = {}) {
   const filename = `app-${stamp}.db`;
   const full = path.join(targetDir, filename);
 
-  let written = false;
-  if (!fs.existsSync(full)) {
-    // Write to a .tmp and rename so a partial file never appears as today's
-    // backup. VACUUM INTO requires the target not to exist.
-    const tmp = `${full}.tmp`;
-    if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    db.prepare(`VACUUM INTO ?`).run(tmp);
-    fs.renameSync(tmp, full);
-    written = true;
+  // Write to a .tmp first and then atomically replace today's file. VACUUM
+  // INTO requires the target path not to exist, so we always write to .tmp
+  // and rename — the rename overwrites the previous hour's file on Linux/Mac
+  // and we explicitly unlink first on Windows where rename won't overwrite.
+  const tmp = `${full}.tmp`;
+  if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+  db.prepare(`VACUUM INTO ?`).run(tmp);
+  if (fs.existsSync(full)) {
+    try { fs.unlinkSync(full); } catch (_) { /* will fail rename below if locked */ }
   }
+  fs.renameSync(tmp, full);
 
   // Prune — keep the `keep` newest app-*.db files, delete the rest.
   const files = fs.readdirSync(targetDir)
@@ -269,7 +274,90 @@ function runDailyBackup({ targetDir, keep = 14 } = {}) {
     try { fs.unlinkSync(path.join(targetDir, f)); } catch (_) { /* ignore */ }
   }
 
-  return { written, path: full, pruned: toDelete.length };
+  return { path: full, pruned: toDelete.length };
+}
+
+/**
+ * List the backup snapshots in `targetDir`, newest first. Returns
+ * `{ name, path, mtime, size }` per entry. Filters to the `app-YYYY-MM-DD.db`
+ * pattern so stray files (including the .tmp scratch file or
+ * pre-restore snapshots in userData) never show up in the picker.
+ */
+function listBackups(targetDir) {
+  if (!targetDir || !fs.existsSync(targetDir)) return [];
+  return fs.readdirSync(targetDir)
+    .filter(f => /^app-\d{4}-\d{2}-\d{2}\.db$/.test(f))
+    .map(f => {
+      const full = path.join(targetDir, f);
+      const stat = fs.statSync(full);
+      return { name: f, path: full, mtime: stat.mtimeMs, size: stat.size };
+    })
+    .sort((a, b) => b.mtime - a.mtime);
+}
+
+/**
+ * Stage a backup file for restore-on-next-launch. We can't swap the live DB
+ * out from under better-sqlite3's exclusive lock at runtime, so the
+ * mechanism is two-phase:
+ *
+ *   1. Copy the chosen snapshot to `<userData>/app.db.restore`.
+ *   2. Caller quits + relaunches the app.
+ *   3. On next launch, `applyPendingRestore` runs BEFORE `init()` and swaps
+ *      the live DB with the staged file.
+ *
+ * Validates the source path is inside `expectedDir` to keep the renderer
+ * from passing arbitrary paths.
+ */
+function stageRestore({ userDataDir, backupPath, expectedDir }) {
+  if (!userDataDir) throw new Error('userDataDir is required');
+  if (!backupPath) throw new Error('backupPath is required');
+  if (!fs.existsSync(backupPath)) throw new Error('Backup file not found.');
+  if (expectedDir) {
+    const resolved = path.resolve(backupPath);
+    const resolvedDir = path.resolve(expectedDir);
+    if (!resolved.startsWith(resolvedDir + path.sep)) {
+      throw new Error('Backup file is not in the expected backup folder.');
+    }
+  }
+  const dest = path.join(userDataDir, 'app.db.restore');
+  fs.copyFileSync(backupPath, dest);
+  return dest;
+}
+
+/**
+ * If a `app.db.restore` file exists in `userDataDir`, apply it as the new
+ * live DB. Must be called BEFORE `init()` so we don't fight the WAL.
+ *
+ * The current live DB (and its WAL/SHM sidecars) is moved aside to
+ * `app.pre-restore-{ISO timestamp}.db[-wal|-shm]` so the user can recover
+ * from a mis-fired restore. Sidecars must travel with the main file —
+ * leaving them behind would let an old WAL attach to the restored DB and
+ * corrupt it.
+ *
+ * Returns `{ applied: true, preRestorePath }` on success, `null` if no
+ * pending restore was staged.
+ */
+function applyPendingRestore(userDataDir) {
+  const pending = path.join(userDataDir, 'app.db.restore');
+  if (!fs.existsSync(pending)) return null;
+
+  const live = path.join(userDataDir, 'app.db');
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const preRestore = path.join(userDataDir, `app.pre-restore-${ts}.db`);
+
+  if (fs.existsSync(live)) {
+    fs.renameSync(live, preRestore);
+    for (const ext of ['-wal', '-shm']) {
+      const src = live + ext;
+      if (fs.existsSync(src)) {
+        try { fs.renameSync(src, preRestore + ext); }
+        catch (_) { try { fs.unlinkSync(src); } catch (_) { /* ignore */ } }
+      }
+    }
+  }
+
+  fs.renameSync(pending, live);
+  return { applied: true, preRestorePath: preRestore };
 }
 
 // ----- aggregates for the daily/recent view -----
@@ -358,5 +446,8 @@ module.exports = {
   weeklyTotals,
   hoursByClient,
   quickLogSession,
-  runDailyBackup,
+  runBackup,
+  listBackups,
+  stageRestore,
+  applyPendingRestore,
 };

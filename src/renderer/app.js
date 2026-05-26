@@ -1178,6 +1178,83 @@ $('#about-open-backups').addEventListener('click', () => {
   callApi('openBackupFolder').catch(() => {});
 });
 
+// ---------- restore from backup ----------
+
+function fmtBackupSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 KB';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fmtBackupTime(ms) {
+  if (!Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  return d.toLocaleString([], {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: 'numeric', minute: '2-digit',
+  });
+}
+
+async function openRestoreModal() {
+  $('#restore-modal').classList.remove('hidden');
+  $('#restore-error').textContent = '';
+  const listEl = $('#restore-list');
+  listEl.innerHTML = '<p class="muted" id="restore-empty">Loading backups…</p>';
+  try {
+    const data = await callApi('listBackups');
+    const backups = data?.backups || [];
+    if (backups.length === 0) {
+      listEl.innerHTML = '<p class="muted">No backup snapshots found yet. They\'re written automatically while the app is running.</p>';
+      return;
+    }
+    listEl.innerHTML = '';
+    for (const b of backups) {
+      const row = document.createElement('div');
+      row.className = 'restore-row';
+      const meta = document.createElement('div');
+      meta.className = 'restore-meta';
+      const name = document.createElement('strong');
+      name.textContent = b.name;
+      const sub = document.createElement('span');
+      sub.className = 'muted';
+      sub.textContent = `${fmtBackupTime(b.mtime)} · ${fmtBackupSize(b.size)}`;
+      meta.appendChild(name);
+      meta.appendChild(sub);
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'primary';
+      btn.textContent = 'Restore';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        $('#restore-error').textContent = '';
+        try {
+          const res = await callApi('restoreBackup', b.name);
+          if (res && res.confirmed === false) {
+            btn.disabled = false; // user cancelled the native dialog
+          }
+          // On confirm, the main process is restarting — nothing else to do here.
+        } catch (err) {
+          $('#restore-error').textContent = err.message || String(err);
+          btn.disabled = false;
+        }
+      });
+      row.appendChild(meta);
+      row.appendChild(btn);
+      listEl.appendChild(row);
+    }
+  } catch (err) {
+    listEl.innerHTML = '';
+    $('#restore-error').textContent = err.message || String(err);
+  }
+}
+
+$('#about-restore-backup').addEventListener('click', openRestoreModal);
+
+$('#restore-cancel').addEventListener('click', () => {
+  $('#restore-modal').classList.add('hidden');
+});
+
 // ---------- hotkey capture ----------
 
 // Working copy of the hotkey accelerators while the Settings modal is open.

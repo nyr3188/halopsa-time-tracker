@@ -1,7 +1,7 @@
 'use strict';
 
 const path = require('path');
-const { ipcMain, app, BrowserWindow, shell } = require('electron');
+const { ipcMain, app, BrowserWindow, dialog, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { HaloClient } = require('./halo-client');
 const { MockHaloClient, MOCK_AGENT_ID } = require('./mock-halo-client');
@@ -15,6 +15,7 @@ let _nudge = null;
 let _statusesCache = null;
 let _onSessionChanged = null;
 let _onPrefsChanged = null;
+let _getMainWindow = null;
 
 // Sessions currently mid-push to Halo. Guards against the user clicking
 // "Push" twice (or Push + Push-all) and creating duplicate actions in Halo.
@@ -178,12 +179,13 @@ function hoursBetween(startIso, endIso) {
   return Math.round((minutes / 60) * 10000) / 10000;
 }
 
-function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged }) {
+function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMainWindow }) {
   _db = db;
   _creds = creds;
   _nudge = nudge || null;
   _onSessionChanged = typeof onSessionChanged === 'function' ? onSessionChanged : null;
   _onPrefsChanged = typeof onPrefsChanged === 'function' ? onPrefsChanged : null;
+  _getMainWindow = typeof getMainWindow === 'function' ? getMainWindow : null;
 
   // ---- status / settings ----
 
@@ -591,6 +593,50 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged }) {
       const result = await shell.openPath(backupDir);
       if (result) throw new Error(result);
       return ok(true);
+    } catch (err) { return fail(err); }
+  });
+
+  // ---- backups ----
+
+  ipcMain.handle('backups:list', async () => {
+    try {
+      const backupDir = path.join(app.getPath('documents'), 'HaloPSA Time Tracker', 'backups');
+      return ok({ backupDir, backups: _db.listBackups(backupDir) });
+    } catch (err) { return fail(err); }
+  });
+
+  ipcMain.handle('backups:restore', async (_evt, filename) => {
+    try {
+      if (!filename || typeof filename !== 'string') {
+        throw new Error('A backup filename is required.');
+      }
+      // Refuse path traversal — filename only, no separators.
+      if (filename.includes('/') || filename.includes('\\') || filename.includes('..')) {
+        throw new Error('Invalid backup filename.');
+      }
+      const backupDir = path.join(app.getPath('documents'), 'HaloPSA Time Tracker', 'backups');
+      const backupPath = path.join(backupDir, filename);
+
+      const parent = _getMainWindow ? _getMainWindow() : null;
+      const { response } = await dialog.showMessageBox(parent && !parent.isDestroyed() ? parent : undefined, {
+        type: 'warning',
+        buttons: ['Restore and restart', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        title: 'Restore from backup',
+        message: `Restore ${filename}?`,
+        detail: 'This will replace your current sessions and ticket cache with the contents of the selected backup. Your current database will be preserved as a "pre-restore" file in the app data folder in case you need to recover it. The app will restart to complete the restore.',
+      });
+      if (response !== 0) return ok({ confirmed: false });
+
+      const userDataDir = app.getPath('userData');
+      _db.stageRestore({ userDataDir, backupPath, expectedDir: backupDir });
+
+      // Relaunch + quit. before-quit sets isQuitting=true so the close-to-tray
+      // window handler doesn't swallow the quit.
+      app.relaunch();
+      app.quit();
+      return ok({ confirmed: true });
     } catch (err) { return fail(err); }
   });
 

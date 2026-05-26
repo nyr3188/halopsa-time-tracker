@@ -53,6 +53,10 @@ contextBridge.exposeInMainWorld('api', {
   openLogFolder:    ()             => invoke('app:openLogFolder'),
   openBackupFolder: ()             => invoke('app:openBackupFolder'),
 
+  // backups
+  listBackups:      ()             => invoke('backups:list'),
+  restoreBackup:    (filename)     => invoke('backups:restore', filename),
+
   // events from main
   onIdleAutoPaused: (handler) => {
     const listener = (_evt, payload) => handler(payload);
