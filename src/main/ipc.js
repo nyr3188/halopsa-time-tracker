@@ -405,11 +405,16 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
       const hours = hoursBetween(session.start_at, session.end_at);
       if (hours <= 0) throw new Error('Session has zero duration; nothing to push.');
 
+      // Halo treats the action's `datetime` as the moment work *ended*
+      // and renders the displayed range as [datetime - timetaken, datetime].
+      // Sending start_at here made every action display N minutes earlier
+      // than the actual work, where N == the session's duration. Send the
+      // end timestamp so Halo's start-of-range matches our start_at.
       const { action, statusWarning } = await client.postTicketAction({
         ticketId: session.ticket_id,
         note: session.note || '(no note)',
         timeTakenHours: hours,
-        occurredAt: new Date(session.start_at),
+        occurredAt: new Date(session.end_at),
         isPrivate: true,
         statusId: session.status_id || null,
       });

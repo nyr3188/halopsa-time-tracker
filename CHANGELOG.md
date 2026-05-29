@@ -5,6 +5,90 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.12.0 — In progress
+
+_Running list of changes accumulating for the next release. Items are
+added as they're coded; the section will be renamed and dated when 0.12.0
+ships._
+
+### Changed
+- **Project Tasks tab — tasks within each project now sort ascending by
+  ticket number.** Tasks are usually created in execution order, so
+  oldest-first reads as "what to do next" inside a project. Client and
+  project ordering above the task list is unchanged (both alphabetical).
+
+### Changed
+- **Idle-stopped modal summary wording.** Replaces "X was stopped
+  because Y" with the more direct "X session was automatically stopped
+  Y" form. Reads naturally for both the time-based reason ("…after 5
+  minutes of inactivity") and the event-based reasons ("…because your
+  screen was locked"), and the explicit "automatically" makes it
+  clear the app — not the user — did the stopping.
+
+### Fixed
+- **Settings modal checkbox alignment.** The three top-level toggles
+  ("Start automatically when I log in to Windows", "Stop the timer when
+  I step away", "Remind me when no timer is running") were rendering
+  with the checkbox stacked above the label text instead of inline left
+  of it. `.modal-card label.checkbox` now applies the same row layout
+  the first-run Settings view and the weekday checkboxes already use,
+  which also covers any future checkbox added to any modal.
+
+### Added
+- **Auto-refresh tickets.** The ticket cache now refreshes itself in the
+  background instead of waiting for a manual "Refresh tickets" click —
+  every 15 minutes on a timer, plus when the window regains focus
+  (debounced so an alt-tab spree doesn't hammer Halo; skips if the last
+  refresh was less than 2 minutes ago). Manual button still works for
+  on-demand refreshes.
+- **Bulk-push note check.** Clicking "Push all unsynced to Halo" now
+  warns when any of the queued sessions have no note ("3 of the 10
+  sessions you're about to push have no note. Push anyway?"). On
+  cancel, the noteless rows in the Sessions log get a visible highlight
+  so they're easy to find and edit. Single-row Push is unchanged —
+  clicking one specific row is assumed intentional.
+- **Light / Dark / System theme toggle.** Settings → Appearance
+  exposes a Light / Dark / System default selector. "System default"
+  follows `prefers-color-scheme` and switches automatically when
+  Windows changes mode. Choice persists in prefs.
+- **"Open in Halo" button on synced sessions.** Replaces the empty
+  space left by the removed "Action #N" label. One click opens the
+  ticket in the default browser at `{baseUrl}/ticket?id={ticketId}`
+  via `shell.openExternal`, so verifying a push landed correctly is
+  a single click instead of a copy-paste of the ticket id into Halo.
+  Hidden in Demo Mode (no real Halo to open).
+
+### Removed
+- **"Action #N" label on synced sessions.** Originally surfaced as
+  proof-of-push metadata, but Halo's action id is a *per-ticket*
+  sequence counter — not a tenant-wide unique id — so the bare number
+  only means something paired with its ticket. Two sessions on
+  different tickets showing the same "Action #4" looks like a bug even
+  though it's correct. The synced badge already communicates "this
+  pushed cleanly", and `synced_action_id` stays in the local DB for
+  forensic lookup if a Halo entry ever needs to be matched back to a
+  session.
+
+---
+
+## 0.11.1 — Fix push timestamps
+
+### Fixed
+- **Pushed actions appeared in Halo N minutes earlier than the actual
+  work**, where N equalled the session's duration. The push payload was
+  sending `session.start_at` as the action's `datetime`, but Halo
+  interprets `datetime` as the moment work *ended* and renders the
+  displayed range as `[datetime - timetaken, datetime]`. A 7-minute
+  session that started at 12:09pm therefore showed up in Halo as
+  12:02pm – 12:09pm. Now sends `session.end_at`, which makes Halo's
+  end-of-range match the local session's end and the start-of-range
+  match the local session's start. Bug has existed since pushing was
+  implemented in 0.6.0 — anyone wanting accurate historical records can
+  edit the affected ticket notes in Halo directly; future pushes are
+  correct. Durations were never wrong; only the displayed timestamps.
+
+---
+
 ## 0.11.0 — Idle-stopped modal with deliberate resume choice
 
 ### Changed
