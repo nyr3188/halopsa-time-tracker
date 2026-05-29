@@ -11,10 +11,11 @@ const { powerMonitor } = require('electron');
  * show a toast.
  */
 class IdleMonitor {
-  constructor({ db, getWindow, getPrefs }) {
+  constructor({ db, getWindow, getPrefs, focusWindow }) {
     this.db = db;
     this.getWindow = getWindow;
     this.getPrefs = getPrefs;
+    this.focusWindow = typeof focusWindow === 'function' ? focusWindow : null;
     this._pollHandle = null;
     this._lastTickMs = Date.now();
   }
@@ -94,6 +95,13 @@ class IdleMonitor {
   }
 
   _notify(reason, payload) {
+    // The renderer pops a modal demanding a deliberate choice (keep stopped /
+    // continue / new timer). Force the window to the front first — without
+    // this, a user idling in another app would just see the taskbar icon
+    // flash, and might come back hours later to a still-stopped session.
+    if (this.focusWindow) {
+      try { this.focusWindow(); } catch (_) { /* don't let focus failure swallow the notify */ }
+    }
     const win = this.getWindow();
     if (win && !win.isDestroyed()) {
       win.webContents.send('idle:auto-paused', { reason, ...payload });

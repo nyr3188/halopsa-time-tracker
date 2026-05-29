@@ -159,6 +159,16 @@ function stopSession({ id, endAt, note, statusId }) {
   return getSession(id);
 }
 
+// Clear end_at on a stopped session so it reappears as the running session.
+// Used by the idle-stopped modal's "Continue as if it never stopped" option,
+// where the user wants the idle gap counted as work. Guarded by synced_at IS
+// NULL — once a session has been pushed to Halo, reopening it locally would
+// just create drift.
+function reopenSession({ id }) {
+  db.prepare(`UPDATE sessions SET end_at = NULL, updated_at = datetime('now') WHERE id = ? AND synced_at IS NULL`).run(id);
+  return getSession(id);
+}
+
 function updateSession({ id, startAt, endAt, note, statusId, ticketId, ticketSummary }) {
   const fields = ['updated_at = datetime(\'now\')'];
   const params = { id };
@@ -436,6 +446,7 @@ module.exports = {
   getRunningSession,
   startSession,
   stopSession,
+  reopenSession,
   updateSession,
   deleteSession,
   getSession,

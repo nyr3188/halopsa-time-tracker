@@ -251,6 +251,24 @@ function showWindow() {
   mainWindow.focus();
 }
 
+// Like showWindow(), but for modal prompts that demand attention even when the
+// user is in another app. Windows blocks foreground stealing for apps that
+// haven't received recent input — show()+focus() alone leaves the taskbar icon
+// flashing instead of bringing the window to front. Briefly toggling
+// alwaysOnTop forces the window above other apps; we flip it back immediately
+// so it doesn't become a permanent floating window.
+function forceFocusWindow() {
+  if (!mainWindow) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.setAlwaysOnTop(true);
+  mainWindow.focus();
+  mainWindow.setAlwaysOnTop(false);
+}
+
 // Quick-log presets are user-configurable. Built fresh from prefs each time —
 // the tray menu and globalShortcut registrations both call this.
 function getQuickLogPresets() {
@@ -428,6 +446,7 @@ app.whenReady().then(() => {
     db,
     getWindow: () => mainWindow,
     getPrefs: () => readPrefs(),
+    focusWindow: forceFocusWindow,
   });
   idleMonitor.start();
 

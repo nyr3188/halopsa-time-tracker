@@ -1479,21 +1479,154 @@ window.api.onTrayOpenSettings(() => {
 
 // ---------- idle auto-pause ----------
 
+// Lockout for "Continue as if it never stopped" — once the session has been
+// stopped for longer than this, reopening would back-fill a suspiciously large
+// idle gap as work, which is the kind of thing that gets you (or Eric) in
+// trouble on time-audit. User can still edit the session manually in the
+// Sessions log or fix the note in Halo after push.
+const IDLE_CONTINUE_LOCKOUT_MS = 30 * 60 * 1000;
+
+// Auto-fire "Keep stopped" if the modal is left untouched. Long enough that a
+// user who stepped away briefly can still respond; short enough that a
+// forgotten modal doesn't permanently block the next nudge / start.
+const IDLE_MODAL_AUTOCLOSE_MS = 20 * 60 * 1000;
+
+let _idleAutoCloseHandle = null;
+let _idleCountdownHandle = null;
+let _idleContext = null;
+
+function clearIdleTimers() {
+  if (_idleAutoCloseHandle) { clearTimeout(_idleAutoCloseHandle); _idleAutoCloseHandle = null; }
+  if (_idleCountdownHandle) { clearInterval(_idleCountdownHandle); _idleCountdownHandle = null; }
+}
+
+function closeIdleModal() {
+  clearIdleTimers();
+  _idleContext = null;
+  hide($('#idle-modal'));
+  $('#idle-modal-error').textContent = '';
+}
+
+function fmtIdleReason(info) {
+  switch (info?.reason) {
+    case 'suspend':     return 'your computer went to sleep';
+    case 'lock-screen': return 'your screen was locked';
+    case 'shutdown':    return 'your computer shut down';
+    case 'idle':
+    default:            return `${info?.idleMinutes || 'a few'} minutes of inactivity`;
+  }
+}
+
+function fmtCountdown(ms) {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
 window.api.onIdleAutoPaused(async (info) => {
   await loadRunning();
   await loadSessions();
   await loadDailyTotals();
 
+  // If a modal is already up from a previous event (e.g. lock-screen then a
+  // poll tick), reset its timers and rebuild with the latest info — stacking
+  // modals would be confusing.
+  clearIdleTimers();
+  _idleContext = info || {};
+
   const ticket = info?.ticketSummary ? `"${info.ticketSummary}"` : 'your session';
-  let reason;
-  switch (info?.reason) {
-    case 'suspend':     reason = 'computer went to sleep'; break;
-    case 'lock-screen': reason = 'screen was locked'; break;
-    case 'shutdown':    reason = 'computer shut down'; break;
-    case 'idle':
-    default:            reason = `${info?.idleMinutes || 'a few'} minutes of inactivity`; break;
+  $('#idle-modal-summary').textContent =
+    `${ticket} was stopped because ${fmtIdleReason(info)}.`;
+
+  const endMs = info?.endAt ? new Date(info.endAt).getTime() : Date.now();
+  const ageMs = Date.now() - endMs;
+  const continueBtn = $('#idle-opt-continue');
+  const continueSub = $('#idle-opt-continue-sub');
+  if (ageMs > IDLE_CONTINUE_LOCKOUT_MS) {
+    continueBtn.disabled = true;
+    continueSub.textContent =
+      'Disabled — too long since the session ended. Edit the session manually if needed.';
+  } else {
+    continueBtn.disabled = false;
+    continueSub.textContent =
+      'Resume the original session and count the idle gap as work.';
   }
-  toast(`Auto-stopped ${ticket} — ${reason}.`, 'success');
+
+  // Sessions log already shows the stopped row, so dismissing the modal
+  // without choosing always lands on a sane "keep stopped" outcome.
+  $('#idle-modal-detail').textContent = info?.sessionId
+    ? `Session #${info.sessionId} is in the Sessions log if you need to edit it.`
+    : '';
+
+  show($('#idle-modal'));
+
+  const deadline = Date.now() + IDLE_MODAL_AUTOCLOSE_MS;
+  const renderCountdown = () => {
+    const remaining = deadline - Date.now();
+    $('#idle-modal-countdown').textContent =
+      `Auto-keeping stopped in ${fmtCountdown(remaining)} if you don't choose.`;
+  };
+  renderCountdown();
+  _idleCountdownHandle = setInterval(renderCountdown, 1000);
+  _idleAutoCloseHandle = setTimeout(() => {
+    // Default behavior — no DB change needed, session was already stopped.
+    closeIdleModal();
+    toast('Kept session stopped.', 'success');
+  }, IDLE_MODAL_AUTOCLOSE_MS);
+});
+
+$('#idle-opt-keep').addEventListener('click', () => {
+  closeIdleModal();
+  toast('Kept session stopped.', 'success');
+});
+
+$('#idle-opt-continue').addEventListener('click', async () => {
+  const ctx = _idleContext;
+  if (!ctx?.sessionId) { closeIdleModal(); return; }
+  try {
+    await callApi('reopenSession', ctx.sessionId);
+    closeIdleModal();
+    await loadRunning();
+    await loadSessions();
+    await loadDailyTotals();
+    toast('Resumed — idle gap counted as work.', 'success');
+  } catch (err) {
+    // callApi already toasted; surface in-modal too so the user knows why
+    // the click didn't dismiss.
+    $('#idle-modal-error').textContent = err.message || String(err);
+  }
+});
+
+$('#idle-opt-new-same').addEventListener('click', async () => {
+  const ctx = _idleContext;
+  if (!ctx?.ticketId) { closeIdleModal(); return; }
+  try {
+    await callApi('startSession', {
+      ticketId: ctx.ticketId,
+      ticketSummary: ctx.ticketSummary || '',
+    });
+    closeIdleModal();
+    await loadRunning();
+    await loadSessions();
+    await loadDailyTotals();
+    toast('Started a new session on the same ticket.', 'success');
+  } catch (err) {
+    $('#idle-modal-error').textContent = err.message || String(err);
+  }
+});
+
+$('#idle-opt-new-other').addEventListener('click', () => {
+  closeIdleModal();
+  // Drop the user into the picker so they can choose a different ticket.
+  // Falls back to the tickets tab if the projects tab was last active —
+  // most "different ticket" flows hit the flat tickets list.
+  switchTab('tickets');
+  const search = $('#ticket-search');
+  if (search) {
+    search.focus();
+    search.select();
+  }
 });
 
 // ---------- init ----------

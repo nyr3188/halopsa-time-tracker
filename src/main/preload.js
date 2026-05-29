@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   // sessions
   startSession:     (payload)      => invoke('sessions:start', payload),
   stopSession:      (payload)      => invoke('sessions:stop', payload),
+  reopenSession:    (id)           => invoke('sessions:reopen', id),
   updateSession:    (payload)      => invoke('sessions:update', payload),
   deleteSession:    (id)           => invoke('sessions:delete', id),
   listSessions:     (payload)      => invoke('sessions:list', payload),

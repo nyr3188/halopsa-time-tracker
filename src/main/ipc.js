@@ -339,6 +339,17 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
     } catch (err) { return fail(err); }
   });
 
+  ipcMain.handle('sessions:reopen', async (_evt, id) => {
+    try {
+      const sessionId = Number(id);
+      if (!sessionId) throw new Error('id is required');
+      const session = _db.reopenSession({ id: sessionId });
+      if (_nudge) _nudge.markActivity();
+      broadcastSessionChanged();
+      return ok(session);
+    } catch (err) { return fail(err); }
+  });
+
   ipcMain.handle('sessions:update', async (_evt, payload) => {
     try {
       const id = Number(payload?.id);

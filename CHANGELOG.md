@@ -5,6 +5,49 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## 0.11.0 — Idle-stopped modal with deliberate resume choice
+
+### Changed
+- **Idle auto-pause now prompts for what to do next** instead of just
+  toasting and walking away. When the timer is stopped because the
+  machine went idle, slept, locked, or shut down, the main window is
+  brought to the front (using a brief `setAlwaysOnTop` toggle to defeat
+  Windows' foreground-stealing prevention) and a modal demands a
+  deliberate choice between four options:
+  - **Keep stopped** — leave the session as-is. Default; auto-fires
+    after 20 minutes of inaction so a forgotten modal can't block the
+    next nudge or start.
+  - **Continue as if it never stopped** — clears `end_at` and resumes
+    the original session, counting the idle gap as work. **Disabled
+    once more than 30 minutes have passed since the session ended** to
+    avoid back-filling a suspiciously large gap; the user can still
+    edit the session manually in the Sessions log, or fix the note in
+    Halo after push.
+  - **Start a new timer on the same ticket** — original session stays
+    stopped; idle gap is not counted.
+  - **Start a new timer on a different ticket** — closes the modal
+    and drops focus into the ticket picker.
+- A live countdown in the modal shows time remaining before the
+  auto-keep fires. Escape does **not** dismiss the modal — the choice
+  must be explicit.
+
+### Added
+- `sessions:reopen` IPC + `db.reopenSession()` to clear `end_at` on a
+  not-yet-synced session.
+- `idle-monitor.js` now accepts a `focusWindow` callback and invokes it
+  before sending `idle:auto-paused`, so the user can't miss the prompt
+  while working in another app.
+
+### Why a minor bump (0.10.x → 0.11.0)
+- Under SemVer's pre-1.0 conventions, the minor digit signals
+  user-visible new capability. Replacing the silent auto-pause toast
+  with a deliberate-choice modal changes the behavior users see every
+  time idle kicks in — and adds the **Continue as if it never
+  stopped** path, which is a brand-new operation. A patch bump would
+  understate the visibility of the change.
+
+---
+
 ## 0.10.0 — Hourly backups + restore-from-backup
 
 ### Added

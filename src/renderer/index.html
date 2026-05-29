@@ -249,6 +249,35 @@
       </div>
     </div>
 
+    <!-- Idle-stopped modal: timer was auto-paused, prompt for what to do next -->
+    <div id="idle-modal" class="modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card idle-modal-card">
+        <h3 id="idle-modal-title">Timer stopped — you were away</h3>
+        <p class="muted" id="idle-modal-summary"></p>
+        <p class="muted idle-modal-detail" id="idle-modal-detail"></p>
+        <div class="idle-options">
+          <button id="idle-opt-keep" class="primary idle-option">
+            <span class="idle-opt-title">Keep stopped</span>
+            <span class="idle-opt-sub">Leave the session as-is. You can edit or push it from the Sessions log.</span>
+          </button>
+          <button id="idle-opt-continue" class="idle-option">
+            <span class="idle-opt-title">Continue as if it never stopped</span>
+            <span class="idle-opt-sub" id="idle-opt-continue-sub">Resume the original session and count the idle gap as work.</span>
+          </button>
+          <button id="idle-opt-new-same" class="idle-option">
+            <span class="idle-opt-title">Start a new timer on the same ticket</span>
+            <span class="idle-opt-sub">Original session stays stopped. The idle gap is not counted.</span>
+          </button>
+          <button id="idle-opt-new-other" class="idle-option">
+            <span class="idle-opt-title">Start a new timer on a different ticket</span>
+            <span class="idle-opt-sub">Closes this and jumps to the ticket picker.</span>
+          </button>
+        </div>
+        <p class="muted idle-modal-countdown" id="idle-modal-countdown"></p>
+        <p class="error" id="idle-modal-error"></p>
+      </div>
+    </div>
+
     <!-- Restore-from-backup picker -->
     <div id="restore-modal" class="modal hidden" role="dialog" aria-modal="true">
       <div class="modal-card">

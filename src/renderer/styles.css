@@ -385,6 +385,45 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 }
 .modal-card .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
 
+/* ---- Idle-stopped modal ---- */
+
+.idle-modal-card { max-width: 540px; }
+.idle-modal-detail { margin: 4px 0 0 0; font-size: 12px; }
+.idle-options {
+  display: flex; flex-direction: column; gap: 10px;
+  margin-top: 16px;
+}
+.idle-option {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  width: 100%; text-align: left;
+  padding: 12px 14px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+  color: var(--text); cursor: pointer;
+  font: inherit;
+  transition: border-color 120ms, background 120ms;
+}
+.idle-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(99,102,241,0.08);
+}
+.idle-option.primary {
+  border-color: var(--accent);
+}
+.idle-option:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.idle-opt-title {
+  font-size: 14px; font-weight: 600; color: var(--text);
+}
+.idle-opt-sub {
+  font-size: 12px; color: var(--muted); line-height: 1.4;
+}
+.idle-modal-countdown {
+  margin-top: 14px; text-align: center;
+  font-size: 12px; font-style: italic;
+}
+
 /* ---- Demo Mode ---- */
 
 .demo-divider {
