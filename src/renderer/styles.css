@@ -15,6 +15,32 @@
   --shadow:    0 6px 20px rgba(0,0,0,0.35);
 }
 
+/* Light palette — overrides only the properties that change; accents and
+   status colours (--good/--warn/--bad) carry over from :root unchanged. */
+[data-theme="light"] {
+  --bg:       #f5f6f8;
+  --panel:    #ffffff;
+  --panel-2:  #eef0f4;
+  --border:   #d6dae1;
+  --text:     #1a1d23;
+  --muted:    #5c6573;
+  --shadow:   0 6px 20px rgba(0,0,0,0.12);
+}
+
+/* "System default" follows the OS. Dark is the :root baseline, so only the
+   light-OS case needs an override. */
+@media (prefers-color-scheme: light) {
+  [data-theme="system"] {
+    --bg:       #f5f6f8;
+    --panel:    #ffffff;
+    --panel-2:  #eef0f4;
+    --border:   #d6dae1;
+    --text:     #1a1d23;
+    --muted:    #5c6573;
+    --shadow:   0 6px 20px rgba(0,0,0,0.12);
+  }
+}
+
 * { box-sizing: border-box; }
 
 html, body {
@@ -345,6 +371,11 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 .sessions-table tr.unassigned td { background: rgba(168,85,247,0.04); }
 .sessions-table .unassigned-label { color: #c084fc; font-style: italic; }
 
+/* Bulk-push note check — flag noteless rows the user declined to push so
+   they're easy to find and edit. Amber to echo the "warn" treatment. */
+.sessions-table tr.note-missing td { background: rgba(245,158,11,0.08); }
+.sessions-table tr.note-missing td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+
 /* Edit modal — hint text under the ticket-id field */
 .modal-card .hint {
   margin: -4px 0 0 0;
@@ -376,6 +407,7 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 }
 .modal-card h3 { margin: 0 0 8px 0; }
 .modal-card label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin-top: 12px; }
+.modal-card label.checkbox { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
 .modal-card input[type="datetime-local"],
 .modal-card select,
 .modal-card textarea {

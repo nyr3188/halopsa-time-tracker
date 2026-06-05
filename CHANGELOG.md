@@ -5,11 +5,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
-## 0.12.0 — In progress
-
-_Running list of changes accumulating for the next release. Items are
-added as they're coded; the section will be renamed and dated when 0.12.0
-ships._
+## 0.12.0 — Light/Dark/System theme, auto-refresh, and sync-log polish
 
 ### Changed
 - **Project Tasks tab — tasks within each project now sort ascending by
@@ -68,6 +64,37 @@ ships._
   pushed cleanly", and `synced_action_id` stays in the local DB for
   forensic lookup if a Halo entry ever needs to be matched back to a
   session.
+
+---
+
+## 0.11.2 — Fix "Start with Windows" not actually launching
+
+### Fixed
+- **The app now actually starts at login when "Start with Windows"
+  is enabled.** The checkbox wrote a startup entry and read it back
+  correctly (fixed in 0.9.1), but on reboot the app silently never
+  launched. Root cause: Electron's `setLoginItemSettings({ args })`
+  writes the `Run`-key value as `path + ' ' + args` *without quoting
+  the path*. With the app installed under
+  `C:\Program Files\HaloPSA Time Tracker\…` — spaces in two path
+  segments — Windows parsed the unquoted command line as the
+  executable `C:\Program` with stray arguments, couldn't find it, and
+  gave up. No window, no tray, no error.
+- On Windows the startup entry is now written directly via `reg.exe`
+  with the executable path wrapped in quotes
+  (`"<exe>" --hidden`), so Windows parses it correctly and the app
+  lands quietly in the tray at login. The `autolaunch:get` /
+  `autolaunch:set` handlers manage the `Run` key
+  (`HKCU\…\CurrentVersion\Run`, value `electron.app.HaloPSA Time
+  Tracker`) themselves on win32; non-Windows platforms keep Electron's
+  `setLoginItemSettings` path.
+
+### Notes
+- Existing installs that had the checkbox enabled were carrying a
+  broken (unquoted) registry entry. Toggling "Start with Windows" off
+  and back on — or just having it enabled when 0.11.2 runs once and
+  re-saves — replaces it with the quoted form. The next reboot then
+  launches hidden to the tray as intended.
 
 ---
 

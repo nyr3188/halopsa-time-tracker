@@ -96,6 +96,7 @@ const state = {
 // ---------- boot ----------
 
 async function boot() {
+  applyTheme(); // apply 'system' default before first paint; refined once prefs load
   const status = await callApi('getStatus').catch(() => null);
   if (!status?.configured) {
     showSettingsView({ firstRun: true });
@@ -105,6 +106,7 @@ async function boot() {
   applyStatus(status);
   show($('#main-view'));
   await refreshAll();
+  startTicketAutoRefresh();
 }
 
 function applyStatus(status) {
@@ -388,6 +390,7 @@ async function refreshTicketsFromHalo() {
     renderTicketsTab();
     renderProjectsTab();
     updateTabCounts();
+    _lastTicketRefreshAt = Date.now();
     toast(`Loaded ${res.count} item${res.count === 1 ? '' : 's'} from Halo.`, 'success');
   } catch (_) { /* toast already shown */ }
   finally {
@@ -396,6 +399,50 @@ async function refreshTicketsFromHalo() {
 }
 
 $('#refresh-tickets').addEventListener('click', refreshTicketsFromHalo);
+
+// ---- background ticket auto-refresh ----
+
+// The ticket cache goes stale as tickets are assigned/closed in Halo while the
+// app sits in the tray. Refresh it on a timer and when the window regains
+// focus, so the picker reflects reality without a manual click. All silent —
+// no spinner, no toast — so it never interrupts what the user is doing.
+const TICKET_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // periodic background pull
+const TICKET_REFRESH_FOCUS_DEBOUNCE_MS = 2 * 60 * 1000; // skip focus pull if this fresh
+let _lastTicketRefreshAt = 0;
+let _ticketRefreshTimer = null;
+
+async function autoRefreshTickets() {
+  // Nothing to pull when not connected, and Demo Mode has no live Halo.
+  if (!state.configured || state.demoMode) return;
+  // Bypass callApi so a transient network hiccup doesn't pop an error toast —
+  // the manual Refresh button is always there for an explicit, loud retry.
+  let res;
+  try {
+    res = await window.api.refreshTickets();
+  } catch (_) {
+    return; // swallow — background refresh stays invisible
+  }
+  if (!res || !res.ok) return;
+  const all = res.data?.tickets || [];
+  state.tickets  = all.filter(t => !t.is_project);
+  state.projects = all.filter(t =>  t.is_project);
+  renderTicketsTab();
+  renderProjectsTab();
+  updateTabCounts();
+  _lastTicketRefreshAt = Date.now();
+}
+
+function startTicketAutoRefresh() {
+  if (_ticketRefreshTimer) return; // boot() is the only caller, but be safe
+  _lastTicketRefreshAt = Date.now(); // refreshAll() just pulled tickets
+  _ticketRefreshTimer = setInterval(autoRefreshTickets, TICKET_REFRESH_INTERVAL_MS);
+  // Alt-tabbing back to the app is a good moment to catch up — but debounce so
+  // an alt-tab spree doesn't hammer Halo.
+  window.addEventListener('focus', () => {
+    if (Date.now() - _lastTicketRefreshAt < TICKET_REFRESH_FOCUS_DEBOUNCE_MS) return;
+    autoRefreshTickets();
+  });
+}
 
 function updateTabCounts() {
   $('#tab-tickets-count').textContent  = state.tickets.length;
@@ -551,7 +598,9 @@ function buildProjectTree(tasks) {
       client,
       parents: Array.from(parents.values())
         .sort((a, b) => a.label.localeCompare(b.label))
-        .map(p => ({ ...p, tasks: p.tasks.sort((a, b) => b.id - a.id) })),
+        // Ascending by id within a project — tasks are usually created in
+        // execution order, so oldest-first reads as "what to do next".
+        .map(p => ({ ...p, tasks: p.tasks.sort((a, b) => a.id - b.id) })),
     }));
   return clients;
 }
@@ -758,6 +807,7 @@ function renderSessions() {
   let pushable = 0;   // unsynced AND has a ticket assigned (drives Push-all enable)
   for (const s of state.sessions) {
     const tr = document.createElement('tr');
+    tr.dataset.sessionId = s.id;
     const isRunning = !s.end_at;
     const isSynced = !!s.synced_at;
     const unassigned = isUnassigned(s);
@@ -825,11 +875,16 @@ function renderSessions() {
       delBtn.textContent = 'Delete';
       delBtn.addEventListener('click', () => deleteSession(s.id));
       actionsCell.append(editBtn, pushBtn, delBtn);
-    } else if (isSynced && s.synced_action_id) {
-      const idSpan = document.createElement('span');
-      idSpan.className = 'ticket-id';
-      idSpan.textContent = `Action #${s.synced_action_id}`;
-      actionsCell.append(idSpan);
+    } else if (isSynced && !state.demoMode && s.ticket_id) {
+      // Demo Mode has no real Halo to open, and unassigned (ticket_id=0)
+      // sessions have no ticket page to land on.
+      const openBtn = document.createElement('button');
+      openBtn.textContent = 'Open in Halo';
+      openBtn.title = 'Open this ticket in Halo in your browser';
+      openBtn.addEventListener('click', () => {
+        callApi('openInHalo', s.ticket_id).catch(() => {});
+      });
+      actionsCell.append(openBtn);
     }
 
     tr.append(ticketCell, startCell, endCell, durCell, noteCell, statusCell, actionsCell);
@@ -875,8 +930,59 @@ async function deleteSession(id) {
   await loadDailyTotals();
 }
 
+// A note is "missing" if it's absent or only whitespace. Quick-log placeholder
+// summaries live in ticket_summary, not note, so they don't count as a note.
+function sessionHasNote(s) {
+  return !!(s.note && s.note.trim());
+}
+
+// Push-all only pushes sessions that are unsynced, stopped, and ticketed —
+// the same set renderSessions counts as "pushable".
+function isPushable(s) {
+  return !s.synced_at && !!s.end_at && !!s.ticket_id;
+}
+
+function clearNoteMissingHighlights() {
+  for (const tr of $$('#sessions-body tr.note-missing')) {
+    tr.classList.remove('note-missing');
+  }
+}
+
+// Tint the noteless rows and bring the first one into view so the user can
+// find and edit them after declining the bulk push.
+function highlightNoteless(sessions) {
+  clearNoteMissingHighlights();
+  let first = null;
+  for (const s of sessions) {
+    const tr = $(`#sessions-body tr[data-session-id="${s.id}"]`);
+    if (!tr) continue;
+    tr.classList.add('note-missing');
+    if (!first) first = tr;
+  }
+  if (first) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
 $('#push-all-btn').addEventListener('click', async () => {
   const btn = $('#push-all-btn');
+
+  // Pre-flight: warn before pushing sessions with no note. A noteless action
+  // in Halo is hard to make sense of later, and bulk-push makes it easy to
+  // send a batch of them without noticing.
+  const queued = state.sessions.filter(isPushable);
+  const noteless = queued.filter(s => !sessionHasNote(s));
+  if (noteless.length > 0) {
+    const proceed = confirm(
+      `${noteless.length} of the ${queued.length} session${queued.length === 1 ? '' : 's'} ` +
+      `you're about to push ${noteless.length === 1 ? 'has' : 'have'} no note. Push anyway?`
+    );
+    if (!proceed) {
+      // Make the offending rows easy to spot so the user can edit them.
+      highlightNoteless(noteless);
+      return;
+    }
+  }
+  clearNoteMissingHighlights();
+
   btn.disabled = true; const original = btn.textContent; btn.textContent = 'Pushing…';
   try {
     const results = await callApi('pushAllUnsynced');
@@ -1062,8 +1168,16 @@ async function loadHoursByClient() {
 
 // ---------- preferences ----------
 
+// Reflects the chosen theme onto the document root. styles.css keys its light
+// palette off [data-theme="light"] and follows the OS for [data-theme="system"]
+// via prefers-color-scheme. Defaults to 'system' before prefs have loaded.
+function applyTheme() {
+  document.documentElement.dataset.theme = state.prefs?.theme || 'system';
+}
+
 async function loadPrefs() {
   state.prefs = await callApi('getPrefs');
+  applyTheme();
   applyQuickLogButtonLabels();
 }
 
@@ -1094,6 +1208,7 @@ async function showSettingsModal() {
   $('#pref-nudge-minutes').value   = p.nudgeIntervalMinutes ?? 30;
   $('#pref-work-start').value      = p.workHoursStart || '09:00';
   $('#pref-work-end').value        = p.workHoursEnd   || '17:00';
+  $('#pref-theme').value           = p.theme || 'system';
   const days = new Set(String(p.workDays || '1,2,3,4,5').split(',').map(s => s.trim()).filter(Boolean));
   $$('#settings-modal input[data-weekday]').forEach(el => {
     el.checked = days.has(el.dataset.weekday);
@@ -1378,6 +1493,7 @@ $('#settings-modal-save').addEventListener('click', async () => {
     workHoursEnd:         $('#pref-work-end').value   || '17:00',
     workDays:             days,
     quickLogMinutes,
+    theme:                $('#pref-theme').value,
     hotkeys:              { ..._pendingHotkeys },
   };
 
@@ -1402,6 +1518,7 @@ $('#settings-modal-save').addEventListener('click', async () => {
 
   try {
     state.prefs = await callApi('savePrefs', payload);
+    applyTheme(); // live preview — reflect the new theme immediately
 
     const wantAutoLaunch = $('#pref-autolaunch').checked;
     if (wantAutoLaunch !== state.autoLaunch) {
@@ -1509,11 +1626,11 @@ function closeIdleModal() {
 
 function fmtIdleReason(info) {
   switch (info?.reason) {
-    case 'suspend':     return 'your computer went to sleep';
-    case 'lock-screen': return 'your screen was locked';
-    case 'shutdown':    return 'your computer shut down';
+    case 'suspend':     return 'because your computer went to sleep';
+    case 'lock-screen': return 'because your screen was locked';
+    case 'shutdown':    return 'because your computer shut down';
     case 'idle':
-    default:            return `${info?.idleMinutes || 'a few'} minutes of inactivity`;
+    default:            return `after ${info?.idleMinutes || 'a few'} minutes of inactivity`;
   }
 }
 
@@ -1535,9 +1652,9 @@ window.api.onIdleAutoPaused(async (info) => {
   clearIdleTimers();
   _idleContext = info || {};
 
-  const ticket = info?.ticketSummary ? `"${info.ticketSummary}"` : 'your session';
+  const ticket = info?.ticketSummary ? `"${info.ticketSummary}" session` : 'Your session';
   $('#idle-modal-summary').textContent =
-    `${ticket} was stopped because ${fmtIdleReason(info)}.`;
+    `${ticket} was automatically stopped ${fmtIdleReason(info)}.`;
 
   const endMs = info?.endAt ? new Date(info.endAt).getTime() : Date.now();
   const ageMs = Date.now() - endMs;
