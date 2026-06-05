@@ -5,6 +5,47 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+_Nothing yet._
+
+---
+
+## 0.12.1 — 2026-06-05
+
+### Changed
+- **A note is now mandatory on every path that can reach Halo.** 0.12.0
+  warned about noteless sessions on bulk push but still let them through;
+  that escape hatch is gone, and the rule now covers every way a time entry
+  is created or sent:
+  - **Bulk push** ("Push all unsynced to Halo") hard-blocks instead of
+    warning. If any queued session has no note, nothing is pushed — the
+    noteless rows highlight in the Sessions log and a message tells you to
+    add a note to each first. The "Push anyway?" prompt is removed.
+  - **Single-row Push** is enforced too. The Push button on a noteless row is
+    disabled with a tooltip ("Add a note first…"), mirroring how it already
+    blocks rows with no ticket assigned.
+  - **Stopping a timer requires a note.** The "What did you work on?" modal
+    drops its "Save without note" button — Save stays disabled until you type
+    a note, and the secondary button is now "Cancel (keep timing)" so an
+    accidental Stop backs out instead of saving a blank entry. Capturing the
+    note while the work is fresh is the whole point of the app. Sessions
+    auto-stopped while you're away (idle / screen lock) still save without a
+    note — you add one via Edit before pushing, and the push gate keeps them
+    from syncing blank.
+
+### Fixed
+- **Backend can no longer emit an empty note.** Both push handlers reject a
+  noteless session outright rather than substituting a `(no note)`
+  placeholder, so an empty note can never reach Halo even if the UI is
+  bypassed.
+- **7-day totals now read left-to-right like a calendar.** The daily-totals
+  strip was building today-first (most recent on the left, counting
+  backwards); it now renders the oldest day on the left through today on the
+  right. Render-only change in `loadDailyTotals` — no data or query change.
+
+---
+
 ## 0.12.0 — Light/Dark/System theme, auto-refresh, and sync-log polish
 
 ### Changed

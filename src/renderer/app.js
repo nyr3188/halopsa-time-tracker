@@ -747,28 +747,41 @@ $('#stop-btn').addEventListener('click', () => {
   $('#stop-summary').textContent = `#${state.running.ticket_id} — ${state.running.ticket_summary}`;
   $('#stop-note').value = '';
   $('#stop-status').value = '';
+  // A note is mandatory to stop — Save stays disabled until one is typed.
+  $('#stop-save').disabled = true;
   populateStatusDropdowns();
   show($('#stop-modal'));
   setTimeout(() => $('#stop-note').focus(), 50);
 });
 
-$('#stop-cancel').addEventListener('click', async () => {
+// Enable Save only once the note has real (non-whitespace) content.
+$('#stop-note').addEventListener('input', () => {
+  $('#stop-save').disabled = !$('#stop-note').value.trim();
+});
+
+// Cancel = back out and keep the timer running. There's deliberately no
+// "save without note" path: the app exists to capture notes as you work,
+// not to leave them blank for later.
+$('#stop-cancel').addEventListener('click', () => {
   hide($('#stop-modal'));
-  if (!state.running) return;
-  await callApi('stopSession', { id: state.running.id, note: '' });
-  await loadRunning();
-  await loadSessions();
-  await loadDailyTotals();
 });
 
 $('#stop-save').addEventListener('click', async () => {
-  hide($('#stop-modal'));
   if (!state.running) return;
+  const note = $('#stop-note').value.trim();
+  // Guard in case Save is reached without the button's disabled state (e.g.
+  // a stray keyboard submit) — never stop a session with an empty note.
+  if (!note) {
+    toast('Add a note before saving.', 'error');
+    $('#stop-note').focus();
+    return;
+  }
+  hide($('#stop-modal'));
   const statusIdRaw = $('#stop-status').value;
   const statusId = statusIdRaw ? Number(statusIdRaw) : null;
   await callApi('stopSession', {
     id: state.running.id,
-    note: $('#stop-note').value || '',
+    note,
     statusId,
   });
   toast('Session saved locally. Push to Halo when ready.', 'success');
@@ -867,8 +880,12 @@ function renderSessions() {
       const pushBtn = document.createElement('button');
       pushBtn.className = 'primary';
       pushBtn.textContent = 'Push';
-      pushBtn.disabled = unassigned;
+      // A push needs both a ticket and a note. Block (and explain) either gap
+      // here so the disabled button matches the backend's hard requirements.
+      const noteMissing = !sessionHasNote(s);
+      pushBtn.disabled = unassigned || noteMissing;
       if (unassigned) pushBtn.title = 'Assign a ticket number first (click Edit).';
+      else if (noteMissing) pushBtn.title = 'Add a note first (click Edit). Halo time entries require a note.';
       pushBtn.addEventListener('click', () => pushSession(s.id, pushBtn));
       const delBtn = document.createElement('button');
       delBtn.className = 'danger';
@@ -965,21 +982,20 @@ function highlightNoteless(sessions) {
 $('#push-all-btn').addEventListener('click', async () => {
   const btn = $('#push-all-btn');
 
-  // Pre-flight: warn before pushing sessions with no note. A noteless action
-  // in Halo is hard to make sense of later, and bulk-push makes it easy to
-  // send a batch of them without noticing.
+  // Pre-flight: a note is mandatory on every push path. Hard-block the bulk
+  // push if any queued session has no note — highlight the offenders and bail
+  // rather than letting a noteless action reach Halo. The backend skips them
+  // too, but blocking here keeps the whole batch from going out half-done.
   const queued = state.sessions.filter(isPushable);
   const noteless = queued.filter(s => !sessionHasNote(s));
   if (noteless.length > 0) {
-    const proceed = confirm(
-      `${noteless.length} of the ${queued.length} session${queued.length === 1 ? '' : 's'} ` +
-      `you're about to push ${noteless.length === 1 ? 'has' : 'have'} no note. Push anyway?`
+    toast(
+      `${noteless.length} of ${queued.length} session${queued.length === 1 ? '' : 's'} ` +
+      `${noteless.length === 1 ? 'has' : 'have'} no note. Add a note to each highlighted row before pushing.`,
+      'error'
     );
-    if (!proceed) {
-      // Make the offending rows easy to spot so the user can edit them.
-      highlightNoteless(noteless);
-      return;
-    }
+    highlightNoteless(noteless);
+    return;
   }
   clearNoteMissingHighlights();
 
@@ -1086,7 +1102,9 @@ async function loadDailyTotals() {
 
   const byDay = new Map(rows.map(r => [r.day, r]));
   const pad = (n) => String(n).padStart(2, '0');
-  for (let i = 0; i < 7; i++) {
+  // Build oldest → newest so the cards read left-to-right like a calendar,
+  // ending on today at the right.
+  for (let i = 6; i >= 0; i--) {
     const d = new Date();
     d.setDate(d.getDate() - i);
     // Bucket key must be the *local* calendar date — toISOString() gives UTC,

@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('path');
+const { spawnSync } = require('child_process');
 const { ipcMain, app, BrowserWindow, dialog, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const { HaloClient } = require('./halo-client');
@@ -42,9 +43,14 @@ const PREFS_DEFAULTS = Object.freeze({
   // Three quick-log durations, in minutes. The renderer renders one button
   // per entry; the main process registers one global hotkey per entry.
   quickLogMinutes: [5, 10, 15],
+  // UI colour theme: 'light' | 'dark' | 'system'. 'system' follows the OS
+  // colour scheme via prefers-color-scheme in the renderer.
+  theme: 'system',
   // Accelerator strings (Electron format). Blank = unregistered.
   hotkeys: { ...DEFAULT_HOTKEYS },
 });
+
+const VALID_THEMES = Object.freeze(['light', 'dark', 'system']);
 
 function readPrefs() {
   const raw = _db.getSetting('prefs');
@@ -108,6 +114,7 @@ function writePrefs(partial) {
   next.idleAutoPauseEnabled = !!next.idleAutoPauseEnabled;
   next.nudgeEnabled = !!next.nudgeEnabled;
   next.quickLogMinutes = sanitizeQuickLogMinutes(next.quickLogMinutes);
+  next.theme = VALID_THEMES.includes(next.theme) ? next.theme : 'system';
   const incoming = (partial && partial.hotkeys) || {};
   const merged = { ...DEFAULT_HOTKEYS, ...(next.hotkeys || {}) };
   for (const key of Object.keys(DEFAULT_HOTKEYS)) {
@@ -400,6 +407,12 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
       if (!session.ticket_id) {
         throw new Error('This session has no ticket assigned. Click Edit and enter a ticket number first.');
       }
+      // A note is mandatory — an empty action in Halo is useless to whoever
+      // reads the ticket later. Block the push rather than substituting a
+      // placeholder. The user adds a note via Edit before pushing.
+      if (!session.note || !session.note.trim()) {
+        throw new Error('This session has no note. Click Edit and add a note before pushing.');
+      }
 
       const client = buildClient();
       const hours = hoursBetween(session.start_at, session.end_at);
@@ -412,7 +425,7 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
       // end timestamp so Halo's start-of-range matches our start_at.
       const { action, statusWarning } = await client.postTicketAction({
         ticketId: session.ticket_id,
-        note: session.note || '(no note)',
+        note: session.note.trim(),
         timeTakenHours: hours,
         occurredAt: new Date(session.end_at),
         isPrivate: true,
@@ -442,6 +455,12 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
           results.push({ id: session.id, ok: false, error: 'No ticket assigned — edit the session first' });
           continue;
         }
+        // A note is mandatory on every push path. Skip (don't substitute a
+        // placeholder) so the user is forced to add a real note via Edit.
+        if (!session.note || !session.note.trim()) {
+          results.push({ id: session.id, ok: false, error: 'No note — add one before pushing' });
+          continue;
+        }
         _pushingIds.add(session.id);
         try {
           const hours = hoursBetween(session.start_at, session.end_at);
@@ -451,7 +470,7 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
           }
           const { action, statusWarning } = await client.postTicketAction({
             ticketId: session.ticket_id,
-            note: session.note || '(no note)',
+            note: session.note.trim(),
             timeTakenHours: hours,
             occurredAt: new Date(session.start_at),
             isPrivate: true,
@@ -514,18 +533,57 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
 
   // ---- launch at login (Windows / macOS) ----
 
-  // The args / path passed to getLoginItemSettings must match what was passed
-  // to setLoginItemSettings — otherwise Electron compares against an empty
-  // args array and won't recognise the registry entry we wrote (Windows),
-  // which makes openAtLogin read back as false even when the entry exists.
-  const AUTOLAUNCH_OPTIONS = {
-    path: process.execPath,
-    args: ['--hidden'],
-  };
+  // On Windows we manage the Run key ourselves instead of going through
+  // Electron's app.setLoginItemSettings({ args }). Electron writes the value
+  // as `path + ' ' + args` WITHOUT quoting the path — so an install under
+  // `C:\Program Files\HaloPSA Time Tracker\…` (spaces in two segments) lands
+  // an unquoted command line that Windows can't parse at login, and the app
+  // silently never starts. Writing the key directly via reg.exe lets us wrap
+  // the exe path in quotes. Non-Windows platforms keep the Electron path.
+  const RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
+  const RUN_VALUE_NAME = `electron.app.${app.getName()}`;
+  // Properly-quoted command line: "<exe>" --hidden
+  const QUOTED_LAUNCH_CMD = `"${process.execPath}" --hidden`;
+
+  function winAutolaunchGet() {
+    const res = spawnSync('reg', ['query', RUN_KEY, '/v', RUN_VALUE_NAME], {
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+    // reg query exits non-zero when the value doesn't exist.
+    return res.status === 0 && /\bREG_SZ\b/.test(res.stdout || '');
+  }
+
+  function winAutolaunchSet(enabled) {
+    if (enabled) {
+      const res = spawnSync(
+        'reg',
+        ['add', RUN_KEY, '/v', RUN_VALUE_NAME, '/t', 'REG_SZ', '/d', QUOTED_LAUNCH_CMD, '/f'],
+        { encoding: 'utf8', windowsHide: true }
+      );
+      if (res.status !== 0) {
+        throw new Error((res.stderr || '').trim() || 'Failed to write the startup registry entry.');
+      }
+    } else {
+      const res = spawnSync('reg', ['delete', RUN_KEY, '/v', RUN_VALUE_NAME, '/f'], {
+        encoding: 'utf8',
+        windowsHide: true,
+      });
+      // Deleting a missing value exits non-zero — that's fine, the end state
+      // (no entry) is what we want. Only surface other failures.
+      if (res.status !== 0 && !/cannot find/i.test(res.stderr || '')) {
+        throw new Error((res.stderr || '').trim() || 'Failed to remove the startup registry entry.');
+      }
+    }
+    return winAutolaunchGet();
+  }
 
   ipcMain.handle('autolaunch:get', async () => {
     try {
-      const settings = app.getLoginItemSettings(AUTOLAUNCH_OPTIONS);
+      if (process.platform === 'win32') {
+        return ok({ enabled: winAutolaunchGet() });
+      }
+      const settings = app.getLoginItemSettings();
       return ok({ enabled: !!settings.openAtLogin });
     } catch (err) {
       return fail(err);
@@ -554,6 +612,23 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
         _nudge.markActivity();
         _nudge.closePopup();
       }
+      return ok(true);
+    } catch (err) { return fail(err); }
+  });
+
+  // ---- open ticket in Halo ----
+
+  ipcMain.handle('app:openTicket', async (_evt, ticketId) => {
+    try {
+      const id = Number(ticketId);
+      if (!id) throw new Error('A ticket id is required.');
+      const stored = _creds.load();
+      if (stored?.demoMode) {
+        throw new Error('Opening tickets in Halo is disabled in Demo Mode.');
+      }
+      const baseUrl = (stored?.baseUrl || '').replace(/\/+$/, '');
+      if (!baseUrl) throw new Error('No Halo URL is configured.');
+      await shell.openExternal(`${baseUrl}/ticket?id=${id}`);
       return ok(true);
     } catch (err) { return fail(err); }
   });
@@ -658,10 +733,17 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
 
   ipcMain.handle('autolaunch:set', async (_evt, enabled) => {
     try {
+      if (process.platform === 'win32') {
+        // Bypass Electron's setLoginItemSettings on Windows — it writes the
+        // Run-key value as `path + ' ' + args` WITHOUT quoting the path, so an
+        // install under `C:\Program Files\HaloPSA Time Tracker\…` lands an
+        // unquoted command line Windows can't parse at login. winAutolaunchSet
+        // writes a quoted entry directly via reg.exe.
+        return ok({ enabled: winAutolaunchSet(!!enabled) });
+      }
       app.setLoginItemSettings({
         openAtLogin: !!enabled,
         openAsHidden: true,
-        args: ['--hidden'],
       });
       const settings = app.getLoginItemSettings();
       return ok({ enabled: !!settings.openAtLogin });

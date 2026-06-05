@@ -47,6 +47,9 @@ contextBridge.exposeInMainWorld('api', {
   snoozeNudge:      (value)        => invoke('nudge:snooze', value),
   nudgeStarted:     ()             => invoke('nudge:started'),
 
+  // open a synced session's ticket in Halo (default browser)
+  openInHalo:       (ticketId)     => invoke('app:openTicket', ticketId),
+
   // about / updates
   getAppInfo:       ()             => invoke('app:info'),
   checkForUpdates:  ()             => invoke('app:checkForUpdates'),
