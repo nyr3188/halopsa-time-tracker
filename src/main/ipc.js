@@ -186,6 +186,65 @@ function hoursBetween(startIso, endIso) {
   return Math.round((minutes / 60) * 10000) / 10000;
 }
 
+// ---- push failure classification + smart retry -----------------------------
+
+// HaloClient throws plain Errors whose message embeds the HTTP status as
+// "(NNN)" (e.g. "Halo POST /Actions failed (500): …", "Halo auth failed
+// (401): …"). A network failure makes fetch throw before any status exists.
+// We read that to decide the failure class and whether it's worth retrying.
+//   'auth'   — 401: credentials/permission, user must fix. No auto-retry.
+//   'client' — other 4xx: bad request, user must fix. No auto-retry.
+//   'server' — 5xx: Halo-side hiccup, usually transient. Auto-retry.
+//   'network'— fetch threw (offline / DNS / unreachable). Auto-retry.
+function classifyPushError(err) {
+  const msg = (err && err.message) ? err.message : String(err);
+  const m = msg.match(/\((\d{3})\)/);
+  if (m) {
+    const status = Number(m[1]);
+    if (status === 401) return 'auth';
+    if (status >= 500) return 'server';
+    if (status >= 400) return 'client';
+  }
+  // No HTTP status in the message → the request never got a response.
+  return 'network';
+}
+
+function isTransientKind(kind) {
+  return kind === 'server' || kind === 'network';
+}
+
+const RETRY_BACKOFF_MS = [2000, 8000, 30000];
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Invoke `attempt` (an async fn that performs one Halo push) with smart retry.
+ * Transient failures (5xx / network) retry with bounded exponential backoff;
+ * auth/client failures throw immediately so the user can fix the cause.
+ *
+ * On success returns the attempt's result. On exhausted/permanent failure it
+ * throws the last error, annotated with `.pushKind` for the caller to persist.
+ */
+async function pushWithRetry(attempt) {
+  let lastErr = null;
+  // First try (index 0) + one retry per backoff entry.
+  for (let i = 0; i <= RETRY_BACKOFF_MS.length; i += 1) {
+    try {
+      return await attempt();
+    } catch (err) {
+      lastErr = err;
+      const kind = classifyPushError(err);
+      err.pushKind = kind;
+      const hasRetryLeft = i < RETRY_BACKOFF_MS.length;
+      if (!isTransientKind(kind) || !hasRetryLeft) throw err;
+      await sleep(RETRY_BACKOFF_MS[i]);
+    }
+  }
+  throw lastErr;
+}
+
 function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMainWindow }) {
   _db = db;
   _creds = creds;
@@ -423,14 +482,25 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
       // Sending start_at here made every action display N minutes earlier
       // than the actual work, where N == the session's duration. Send the
       // end timestamp so Halo's start-of-range matches our start_at.
-      const { action, statusWarning } = await client.postTicketAction({
-        ticketId: session.ticket_id,
-        note: session.note.trim(),
-        timeTakenHours: hours,
-        occurredAt: new Date(session.end_at),
-        isPrivate: true,
-        statusId: session.status_id || null,
-      });
+      let result;
+      try {
+        result = await pushWithRetry(() => client.postTicketAction({
+          ticketId: session.ticket_id,
+          note: session.note.trim(),
+          timeTakenHours: hours,
+          occurredAt: new Date(session.end_at),
+          isPrivate: true,
+          statusId: session.status_id || null,
+        }));
+      } catch (err) {
+        // The Halo push itself failed (after exhausting any transient
+        // retries). Persist the failure so the row keeps a Failed badge and
+        // the roll-up counts it, even across an app restart.
+        const kind = err.pushKind || classifyPushError(err);
+        const updated = _db.recordPushFailure(session.id, { error: err.message, kind });
+        return { ok: false, error: err.message, kind, session: updated };
+      }
+      const { action, statusWarning } = result;
       const actionId = action?.id || action?.actionid || null;
       const updated = _db.markSessionSynced({ id: session.id, actionId });
       return ok({ session: updated, actionId, hours, statusWarning });
@@ -468,19 +538,29 @@ function registerIpc({ db, creds, nudge, onSessionChanged, onPrefsChanged, getMa
             results.push({ id: session.id, ok: false, error: 'Zero duration' });
             continue;
           }
-          const { action, statusWarning } = await client.postTicketAction({
-            ticketId: session.ticket_id,
-            note: session.note.trim(),
-            timeTakenHours: hours,
-            occurredAt: new Date(session.start_at),
-            isPrivate: true,
-            statusId: session.status_id || null,
-          });
+          let pushed;
+          try {
+            // Halo's action datetime is the moment work *ended* and renders the
+            // range as [datetime - timetaken, datetime]. Send end_at so the
+            // displayed range matches our [start, end] — same as single push.
+            pushed = await pushWithRetry(() => client.postTicketAction({
+              ticketId: session.ticket_id,
+              note: session.note.trim(),
+              timeTakenHours: hours,
+              occurredAt: new Date(session.end_at),
+              isPrivate: true,
+              statusId: session.status_id || null,
+            }));
+          } catch (err) {
+            const kind = err.pushKind || classifyPushError(err);
+            _db.recordPushFailure(session.id, { error: err.message, kind });
+            results.push({ id: session.id, ok: false, error: err.message, kind });
+            continue;
+          }
+          const { action, statusWarning } = pushed;
           const actionId = action?.id || action?.actionid || null;
           _db.markSessionSynced({ id: session.id, actionId });
           results.push({ id: session.id, ok: true, actionId, hours, statusWarning });
-        } catch (err) {
-          results.push({ id: session.id, ok: false, error: err.message });
         } finally {
           _pushingIds.delete(session.id);
         }

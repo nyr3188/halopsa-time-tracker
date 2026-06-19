@@ -115,6 +115,19 @@
             <div id="project-tree"></div>
             <button id="start-projects-btn" class="primary" disabled>Start</button>
           </div>
+
+          <div id="backdate-bar">
+            <button type="button" id="backdate-toggle" class="link-btn">Started earlier?</button>
+            <div id="backdate-fields" class="hidden">
+              <label for="backdate-start">Start time</label>
+              <input type="datetime-local" id="backdate-start" />
+              <button type="button" id="backdate-clear" class="link-btn">Clear</button>
+              <div id="backdate-hint" class="muted">
+                Starts a live timer from this past time. Leave empty to start now.
+              </div>
+              <div id="backdate-error" class="error"></div>
+            </div>
+          </div>
         </div>
         <div id="timer-running" class="hidden">
           <div class="running-info">
@@ -135,6 +148,8 @@
         <div class="panel-header">
           <h2>Sessions</h2>
           <div class="panel-actions">
+            <button id="sync-issues" type="button" class="sync-issues hidden"
+                    title="Click to find the sessions that failed to sync"></button>
             <span id="unsynced-count" class="muted"></span>
             <button id="push-all-btn" class="primary">Push all unsynced to Halo</button>
           </div>

@@ -21,3 +21,19 @@ Thumbs.db
 
 # Electron-builder cache
 .cache/
+
+# Local SQLite database + WAL/SHM sidecars. These normally live in the app's
+# userData folder, but guard against a stray dev run dropping one in the tree.
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Restore-from-backup staging files (db.stageRestore / pre-restore snapshots)
+*.db.restore
+app.pre-restore-*.db
+
+# Handoff / working artifacts
+HANDOFF-*.md
+archive/

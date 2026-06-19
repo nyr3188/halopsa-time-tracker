@@ -61,6 +61,14 @@ function migrate(db) {
   // resolve the status name from the loaded statuses list when Halo's
   // /Tickets response omits the status name string.
   addColumnIfMissing(db, 'tickets', 'status_id', 'INTEGER');
+
+  // v0.13.0 — persist Halo push-failure state so a failed sync survives the
+  // error toast (and an app restart) instead of vanishing. push_error_kind
+  // drives badge wording and whether auto-retry applies.
+  addColumnIfMissing(db, 'sessions', 'last_push_error',      'TEXT');
+  addColumnIfMissing(db, 'sessions', 'last_push_attempt_at', 'TEXT');
+  addColumnIfMissing(db, 'sessions', 'push_attempts',        'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfMissing(db, 'sessions', 'push_error_kind',      'TEXT');
 }
 
 function addColumnIfMissing(db, table, column, decl) {
@@ -229,11 +237,35 @@ function quickLogSession({ minutes }) {
 }
 
 function markSessionSynced({ id, actionId }) {
+  // Clearing the push-failure columns on success means a session that finally
+  // syncs (manual Retry or a later backoff attempt) drops out of the roll-up
+  // and loses its Failed badge.
   db.prepare(`
     UPDATE sessions
-    SET synced_at = datetime('now'), synced_action_id = ?, updated_at = datetime('now')
+    SET synced_at = datetime('now'), synced_action_id = ?,
+        last_push_error = NULL, last_push_attempt_at = NULL,
+        push_attempts = 0, push_error_kind = NULL,
+        updated_at = datetime('now')
     WHERE id = ?
   `).run(actionId || null, id);
+  return getSession(id);
+}
+
+/**
+ * Persist a failed Halo push so it survives the error toast and an app restart.
+ * Increments push_attempts, stamps the attempt time, and records the message +
+ * classification ('transient' | 'auth' | 'client' | 'server' | …) that drives
+ * badge wording and whether the next attempt auto-retries.
+ */
+function recordPushFailure(id, { error, kind } = {}) {
+  db.prepare(`
+    UPDATE sessions
+    SET last_push_error = ?, push_error_kind = ?,
+        last_push_attempt_at = datetime('now'),
+        push_attempts = push_attempts + 1,
+        updated_at = datetime('now')
+    WHERE id = ?
+  `).run(error == null ? null : String(error), kind || null, id);
   return getSession(id);
 }
 
@@ -384,7 +416,13 @@ function dailyTotals({ days = 7 } = {}) {
         CASE WHEN end_at IS NULL THEN 0
         ELSE (julianday(end_at) - julianday(start_at)) * 24.0
         END
-      ) AS hours
+      ) AS hours,
+      SUM(
+        CASE WHEN synced_at IS NULL AND end_at IS NOT NULL
+        THEN (julianday(end_at) - julianday(start_at)) * 24.0
+        ELSE 0
+        END
+      ) AS unsubmitted_hours
     FROM sessions
     GROUP BY day
     ORDER BY day DESC
@@ -453,6 +491,7 @@ module.exports = {
   listSessions,
   listUnsyncedSessions,
   markSessionSynced,
+  recordPushFailure,
   dailyTotals,
   weeklyTotals,
   hoursByClient,

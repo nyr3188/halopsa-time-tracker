@@ -557,10 +557,70 @@ $('#ticket-search').addEventListener('keydown', (evt) => {
   }
 });
 
+// ---- backdated start ("I forgot to start the timer") ----
+
+// Reveal/hide the datetime-local field. When opening, prefill with `now` so the
+// user nudges it back rather than typing a full timestamp from scratch.
+$('#backdate-toggle').addEventListener('click', () => {
+  const fields = $('#backdate-fields');
+  const opening = fields.classList.contains('hidden');
+  if (opening) {
+    show(fields);
+    if (!$('#backdate-start').value) {
+      $('#backdate-start').value = isoToLocalDatetimeInput(new Date().toISOString());
+    }
+    $('#backdate-toggle').textContent = 'Start now instead';
+  } else {
+    hide(fields);
+    $('#backdate-error').textContent = '';
+    $('#backdate-toggle').textContent = 'Started earlier?';
+  }
+});
+
+$('#backdate-clear').addEventListener('click', () => {
+  $('#backdate-start').value = '';
+  $('#backdate-error').textContent = '';
+});
+
+// Collapse the backdate bar back to its default ("start now") state after a
+// session has been started, so the next Start doesn't silently reuse an old
+// backdated time.
+function resetBackdateBar() {
+  $('#backdate-start').value = '';
+  $('#backdate-error').textContent = '';
+  hide($('#backdate-fields'));
+  $('#backdate-toggle').textContent = 'Started earlier?';
+}
+
+// Resolve the start time for a new session. Returns an ISO string when the user
+// set a (past) backdated time, or null to mean "start now". Throws with an
+// inline message when the chosen time is in the future — a future start would
+// render a negative elapsed timer.
+function resolveStartAt() {
+  $('#backdate-error').textContent = '';
+  const fields = $('#backdate-fields');
+  if (fields.classList.contains('hidden')) return null;
+  const raw = $('#backdate-start').value;
+  if (!raw) return null;
+  const iso = localDatetimeInputToIso(raw);
+  if (!iso) {
+    $('#backdate-error').textContent = 'Enter a valid start time.';
+    throw new Error('invalid backdate');
+  }
+  if (new Date(iso).getTime() > Date.now()) {
+    $('#backdate-error').textContent = 'Start time can\'t be in the future.';
+    throw new Error('future backdate');
+  }
+  return iso;
+}
+
 $('#start-btn').addEventListener('click', async () => {
   if (!state.selectedTicketId) return;
+  let startAt;
+  try { startAt = resolveStartAt(); } catch (_) { return; }
   const ticket = state.tickets.find(t => t.id === state.selectedTicketId);
-  await callApi('startSession', { ticketId: state.selectedTicketId, ticketSummary: ticket?.summary });
+  await callApi('startSession', { ticketId: state.selectedTicketId, ticketSummary: ticket?.summary, startAt });
+  resetBackdateBar();
   toast('Session started.', 'success');
   await loadRunning();
   await loadSessions();
@@ -709,8 +769,11 @@ $('#project-search').addEventListener('keydown', (evt) => {
 
 $('#start-projects-btn').addEventListener('click', async () => {
   if (!state.selectedProjectTaskId) return;
+  let startAt;
+  try { startAt = resolveStartAt(); } catch (_) { return; }
   const task = state.projects.find(t => t.id === state.selectedProjectTaskId);
-  await callApi('startSession', { ticketId: state.selectedProjectTaskId, ticketSummary: task?.summary });
+  await callApi('startSession', { ticketId: state.selectedProjectTaskId, ticketSummary: task?.summary, startAt });
+  resetBackdateBar();
   toast('Session started.', 'success');
   await loadRunning();
   await loadSessions();
@@ -818,14 +881,19 @@ function renderSessions() {
 
   let unsynced = 0;   // all not-yet-pushed, not-running (drives the badge count)
   let pushable = 0;   // unsynced AND has a ticket assigned (drives Push-all enable)
+  let failed = 0;     // unsynced with a persisted push failure (drives the roll-up)
   for (const s of state.sessions) {
     const tr = document.createElement('tr');
     tr.dataset.sessionId = s.id;
     const isRunning = !s.end_at;
     const isSynced = !!s.synced_at;
     const unassigned = isUnassigned(s);
+    // A failure that's still standing: stopped, not yet synced, with a recorded
+    // last_push_error. Cleared automatically once the session finally syncs.
+    const hasFailure = !isSynced && !isRunning && !!s.last_push_error;
     if (isSynced) tr.classList.add('synced');
     if (unassigned) tr.classList.add('unassigned');
+    if (hasFailure) { tr.classList.add('push-failed'); failed += 1; }
     if (!isSynced && !isRunning) {
       unsynced += 1;
       if (!unassigned) pushable += 1;
@@ -869,6 +937,7 @@ function renderSessions() {
     if (isRunning) statusCell.innerHTML = '<span class="badge running">running</span>';
     else if (isSynced) statusCell.innerHTML = '<span class="badge synced">synced</span>';
     else if (unassigned) statusCell.innerHTML = '<span class="badge unassigned">unassigned</span>';
+    else if (hasFailure) statusCell.innerHTML = `<span class="badge failed" title="${escape(pushFailureTooltip(s))}">failed</span>`;
     else statusCell.innerHTML = '<span class="badge unsynced">local</span>';
 
     const actionsCell = document.createElement('td');
@@ -879,13 +948,16 @@ function renderSessions() {
       editBtn.addEventListener('click', () => openEditModal(s));
       const pushBtn = document.createElement('button');
       pushBtn.className = 'primary';
-      pushBtn.textContent = 'Push';
+      // A previously-failed session pushes via the same path — label it Retry
+      // so it's clear the last attempt didn't land.
+      pushBtn.textContent = hasFailure ? 'Retry' : 'Push';
       // A push needs both a ticket and a note. Block (and explain) either gap
       // here so the disabled button matches the backend's hard requirements.
       const noteMissing = !sessionHasNote(s);
       pushBtn.disabled = unassigned || noteMissing;
       if (unassigned) pushBtn.title = 'Assign a ticket number first (click Edit).';
       else if (noteMissing) pushBtn.title = 'Add a note first (click Edit). Halo time entries require a note.';
+      else if (hasFailure) pushBtn.title = pushFailureTooltip(s);
       pushBtn.addEventListener('click', () => pushSession(s.id, pushBtn));
       const delBtn = document.createElement('button');
       delBtn.className = 'danger';
@@ -910,6 +982,40 @@ function renderSessions() {
 
   $('#unsynced-count').textContent = unsynced > 0 ? `${unsynced} unsynced` : 'All synced';
   $('#push-all-btn').disabled = pushable === 0;
+  renderSyncIssues(failed);
+}
+
+// Compact "Sync issues" roll-up beside the unsynced count. Hidden at zero;
+// clicking it highlights and scrolls to the failed rows so the user can Retry.
+function renderSyncIssues(count) {
+  const el = $('#sync-issues');
+  if (!el) return;
+  if (count > 0) {
+    el.textContent = `${count} sync issue${count === 1 ? '' : 's'}`;
+    show(el);
+  } else {
+    el.textContent = '';
+    hide(el);
+  }
+}
+
+// Tooltip text for a failed session: the Halo error plus how many attempts
+// have been made so far.
+function pushFailureTooltip(s) {
+  const err = s.last_push_error || 'Push failed.';
+  const n = s.push_attempts || 0;
+  return n > 0 ? `${err} (attempt ${n})` : err;
+}
+
+// Tint the failed rows and bring the first into view — same affordance as the
+// noteless highlight, triggered by clicking the "Sync issues" roll-up.
+function highlightFailed() {
+  let first = null;
+  for (const tr of $$('#sessions-body tr.push-failed')) {
+    tr.classList.add('note-missing');
+    if (!first) first = tr;
+  }
+  if (first) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function escape(s) {
@@ -935,8 +1041,11 @@ async function pushSession(id, btn) {
     await loadSessions();
     await loadDailyTotals();
   } catch (_) {
-    // error toast already shown — re-enable so the user can retry
+    // Error toast already shown. Reload so the now-persisted failure surfaces
+    // as a Failed badge + Retry button and bumps the "Sync issues" roll-up.
+    // loadSessions rebuilds the row, so the stale button reference is replaced.
     if (btn) btn.disabled = false;
+    await loadSessions();
   }
 }
 
@@ -1020,6 +1129,13 @@ $('#push-all-btn').addEventListener('click', async () => {
   finally {
     btn.textContent = original;
   }
+});
+
+// Clicking the "Sync issues" roll-up jumps to the failed rows so the user can
+// hit Retry (or Edit) on each one.
+$('#sync-issues').addEventListener('click', () => {
+  clearNoteMissingHighlights();
+  highlightFailed();
 });
 
 // ---------- edit modal ----------
@@ -1115,10 +1231,15 @@ async function loadDailyTotals() {
     const card = document.createElement('div');
     card.className = 'day-card';
     const dayName = d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+    const unsubmitted = row.unsubmitted_hours || 0;
+    const unsubmittedLine = unsubmitted > 0
+      ? `<div class="day-unsubmitted">${unsubmitted.toFixed(2)}h unsubmitted</div>`
+      : '';
     card.innerHTML = `
       <div class="day-name">${dayName}</div>
       <div class="day-hours">${(row.hours || 0).toFixed(2)}h</div>
       <div class="day-sessions">${row.sessions || 0} session${row.sessions === 1 ? '' : 's'}</div>
+      ${unsubmittedLine}
     `;
     container.appendChild(card);
   }

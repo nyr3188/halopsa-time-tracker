@@ -210,6 +210,24 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 /* ---- Timer ---- */
 
 .timer-controls { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: start; }
+
+/* ---- Backdated start ("Started earlier?") ---- */
+#backdate-bar { margin-top: 10px; }
+.link-btn {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--accent); font-size: 13px; text-decoration: underline;
+}
+.link-btn:hover { opacity: 0.85; }
+#backdate-fields {
+  margin-top: 8px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+}
+#backdate-fields label { font-size: 13px; color: var(--muted); }
+#backdate-start {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+  color: var(--text); padding: 6px 10px; font-size: 13px;
+}
+#backdate-hint { flex-basis: 100%; font-size: 12px; }
+#backdate-error { flex-basis: 100%; }
 #ticket-search, #project-search {
   grid-column: 1 / -1;
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
@@ -366,10 +384,24 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 .badge.synced     { background: rgba(74,222,128,0.12); color: var(--good); border: 1px solid rgba(74,222,128,0.35); }
 .badge.running    { background: rgba(79,140,255,0.15); color: var(--accent); border: 1px solid rgba(79,140,255,0.35); }
 .badge.unassigned { background: rgba(168,85,247,0.15); color: #c084fc; border: 1px solid rgba(168,85,247,0.35); }
+.badge.failed     { background: rgba(239,68,68,0.15); color: var(--bad); border: 1px solid rgba(239,68,68,0.35); cursor: help; }
 
 /* Sessions table — unassigned row treatment */
 .sessions-table tr.unassigned td { background: rgba(168,85,247,0.04); }
 .sessions-table .unassigned-label { color: #c084fc; font-style: italic; }
+
+/* Failed-push row treatment — a red rail echoing the .badge.failed colour. */
+.sessions-table tr.push-failed td { background: rgba(239,68,68,0.05); }
+.sessions-table tr.push-failed td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
+
+/* "Sync issues" roll-up — a small red pill beside the unsynced count. Hidden
+   when there are zero failures. */
+.sync-issues {
+  background: rgba(239,68,68,0.15); color: var(--bad);
+  border: 1px solid rgba(239,68,68,0.35); border-radius: 999px;
+  padding: 3px 10px; font-size: 12px; font-weight: 500; cursor: pointer;
+}
+.sync-issues:hover { background: rgba(239,68,68,0.25); }
 
 /* Bulk-push note check — flag noteless rows the user declined to push so
    they're easy to find and edit. Amber to echo the "warn" treatment. */
@@ -393,6 +425,7 @@ button.danger:hover { background: rgba(239,68,68,0.08); }
 .day-card .day-name  { font-size: 12px; color: var(--muted); }
 .day-card .day-hours { font-size: 22px; font-weight: 600; margin-top: 4px; }
 .day-card .day-sessions { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.day-card .day-unsubmitted { font-size: 11px; color: var(--warn); margin-top: 4px; font-weight: 500; }
 
 /* ---- Modals ---- */
 

@@ -7,7 +7,44 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-_Nothing yet._
+---
+
+## 0.13.0 — 2026-06-05
+
+### Added
+- **Unsubmitted time is now visible at a glance in the daily tiles.** Each of
+  the 7 day cards still shows your total tracked hours as the headline number,
+  but when you have stopped sessions that haven't been pushed to Halo yet, an
+  amber `X.XXh unsubmitted` line appears beneath it. The line disappears once
+  everything for that day is pushed.
+- **Backdated start — "Started earlier?"** Forgot to hit Start when you began
+  working? A new **Started earlier?** link beneath the ticket picker reveals a
+  start-time field; pick a past time and Start launches a *live* timer already
+  counting from then. From that point it behaves exactly like any other running
+  session — Stop prompts for a note, and the entry pushes to Halo normally. A
+  plain Start click still starts at *now*, so the common path is unchanged.
+  Future times are rejected (they'd render a negative timer), and starting a
+  backdated session auto-stops any timer already running, just like a normal
+  Start. Works from both the Tickets and Project Tasks tabs.
+- **A failed push to Halo no longer disappears.** Until now, if a push failed,
+  you got a brief error and the session just sat there looking unsynced with no
+  hint of what went wrong. Now a failed push is remembered: the row shows a red
+  **failed** badge (hover it for the reason and how many attempts were made) and
+  a **Retry** button, and a **N sync issues** pill appears in the Sessions
+  header — click it to jump straight to the affected rows. The failure sticks
+  around even if you restart the app, so nothing slips through unnoticed.
+  Temporary problems (network drops, Halo server hiccups) retry automatically a
+  few times with a growing delay before giving up; problems you need to fix
+  yourself (sign-in/permission errors) surface right away without retrying. As
+  soon as a session finally pushes, its badge and the pill clear themselves.
+
+### Fixed
+- **"Push all" now stamps the correct time in Halo.** Sessions pushed via the
+  bulk **Push all** button were landing in Halo shifted earlier by their own
+  duration (a 1-hour entry showed up an hour before it actually happened),
+  while single-session **Push** was already correct. Both paths now use the
+  same end-of-work timestamp, so the displayed range matches your real start
+  and end times.
 
 ---
 
